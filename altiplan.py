@@ -443,6 +443,16 @@ def main():
             r5_post = s.post(ajax_url, data=prev_data, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
             r5_post.raise_for_status()
  
+             # 6) Logout (reset server-side session) + ryd lokale cookies
+            logout_url = urljoin(BASE, "/webmodul/log-af/")
+
+            # Brug samme basisheaders som dine GETs
+            r6 = s.get(logout_url, timeout=30, verify=verify_tls)
+            r6.raise_for_status()
+
+            # Ryd cookies i klient-sessionen (requests.Session)
+            s.cookies.clear()
+
     except requests.RequestException as e:
         print(f"HTTP-fejl: {e}", file=sys.stderr)
         sys.exit(1)
