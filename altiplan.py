@@ -375,14 +375,14 @@ def main():
             data_date_str = bottom_bar.get("data-date") if bottom_bar else None  # fx "20260126"
 
             if not data_date_str or not re.fullmatch(r"\d{8}", data_date_str):
-                raise RuntimeError(f"Kunne ikke finde gyldig data-date i iteration {i+1}/12: {data_date_str!r}")
+                raise RuntimeError(f"Kunne ikke finde gyldig data-date i iteration {i+1}/{args.months}: {data_date_str!r}")
 
             anchor_year = int(data_date_str[0:4])
             anchor_month = int(data_date_str[4:6])
 
             grid_div = soup.select_one(calendar_selector)
             if grid_div is None:
-                raise RuntimeError(f"Kunne ikke finde calendar grid: {calendar_selector} (iteration {i+1}/12)")
+                raise RuntimeError(f"Kunne ikke finde calendar grid: {calendar_selector} (iteration {i+1}/{args.months})")
 
             # Find alle day-cells
             day_cells = grid_div.select("div.grid-item-calendar-month")
@@ -398,13 +398,13 @@ def main():
                 month_cells.append(cell)
 
             if not month_cells:
-                raise RuntimeError(f"Ingen this-month cells (iteration {i+1}/12).")
+                raise RuntimeError(f"Ingen this-month cells (iteration {i+1}/{args.months}).")
 
             # Fastlæg month/year for denne måneds view:
             # Vi tager måneden fra første this-month cell og justerer år ift anchor (årsskifte).
             first_date_p = month_cells[0].select_one("p.grid-item-date")
             if first_date_p is None:
-                raise RuntimeError(f"Mangler p.grid-item-date i første this-month cell (iteration {i+1}/12)")
+                raise RuntimeError(f"Mangler p.grid-item-date i første this-month cell (iteration {i+1}/{args.months})")
 
             _, current_month = parse_day_month(first_date_p.get_text(" ", strip=True))
 
@@ -443,15 +443,15 @@ def main():
             r5_post = s.post(ajax_url, data=prev_data, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
             r5_post.raise_for_status()
  
-             # 6) Logout (reset server-side session) + ryd lokale cookies
-            logout_url = urljoin(BASE, "/webmodul/log-af/")
+        # 6) Logout (reset server-side session) + ryd lokale cookies
+        logout_url = urljoin(BASE, "/webmodul/log-af/")
 
-            # Brug samme basisheaders som dine GETs
-            r6 = s.get(logout_url, timeout=30, verify=verify_tls)
-            r6.raise_for_status()
+        # Brug samme basisheaders som dine GETs
+        r6 = s.get(logout_url, timeout=30, verify=verify_tls)
+        r6.raise_for_status()
 
-            # Ryd cookies i klient-sessionen (requests.Session)
-            s.cookies.clear()
+        # Ryd cookies i klient-sessionen (requests.Session)
+        s.cookies.clear()
 
     except requests.RequestException as e:
         print(f"HTTP-fejl: {e}", file=sys.stderr)
