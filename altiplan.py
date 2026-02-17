@@ -288,11 +288,22 @@ def filter_non_time_rows(rows):
     """
     return [r for r in rows if not TIME_RANGE_RE.search(r[1] or "")]
 
+def stats_for_term(rows, term: str):
+    total = sum(1 for _, text, _, _, _ in rows if text == term)
+    weekend_or_holiday = sum(1 for _, text, weekend, holiday, _ in rows if text == term and (weekend or holiday))
+    unique_days = len({date_iso for date_iso, text, _, _, _ in rows if text == term})
+    unique_days_weekend_or_holiday = len({date_iso for date_iso, text, weekend, holiday, _ in rows if text == term and (weekend or holiday)})
+    return total, weekend_or_holiday, unique_days, unique_days_weekend_or_holiday
+
 def main():
     ap = argparse.ArgumentParser(description="Altiplan login via WP admin-ajax + ekstra ajax-kald")
     ap.add_argument("--afdeling", required=True, help="Afd (fx od207)")
     ap.add_argument("--brugernavn", required=True)
     ap.add_argument("--password", required=True)
+    ap.add_argument("--savefile", default=None,
+                help="Gem all_rows som JSON til denne fil (fx rows.json)")
+    ap.add_argument("--find", action="append", default=[],
+                help='Søgetekst til statistik. Kan angives flere gange. Ex: --find "VITA dagtid"')
     ap.add_argument("--insecure", action="store_true",
                     help="Svar til curl -k: disable TLS cert verification (frarådes)")
     ap.add_argument("--months", type=int, default=1,
@@ -433,10 +444,13 @@ def main():
                 if time_p is None:
                     continue
 
+                #print("RAW_CELLS:", cell.prettify()[:800])
+                ps = time_p.decode_contents()
+
                 lines = extract_time_lines(time_p)
 
                 for ln in lines:
-                    all_rows.append([d.isoformat(), ln, weekend, holiday])
+                    all_rows.append([d.isoformat(), ln, weekend, holiday, ps])
                     
             # 5d) POST ajax: show_previous_month_hi (skift måned for næste iteration)
             prev_data = {"action": "show_previous_month_hi"}
@@ -466,9 +480,14 @@ def main():
         if name in TARGET_COOKIE_NAMES or name.startswith("NSC_") or name == "PHPSESSID":
             relevant[name] = value
 
-    print("=== Relevant cookies (name=value) ===")
-    for k, v in relevant.items():
-        print(f"{k}={v}")
+    if args.savefile:
+        with open(args.savefile, "w", encoding="utf-8") as f:
+            json.dump(all_rows, f, ensure_ascii=False, indent=2)
+        print(f"\n=== Gemte output til: {args.savefile} ===")
+
+    # print("=== Relevant cookies (name=value) ===")
+    # for k, v in relevant.items():
+    #     print(f"{k}={v}")
 
     # print("\n=== Login AJAX response (første 300 chars) ===")
     # print(r2.text[:300])
@@ -479,19 +498,19 @@ def main():
     # print(f"\n=== Calendar rows ({args.months} month) ===")
     # print(json.dumps(all_rows, ensure_ascii=False, indent=2))
 
-    print("=== Specifik statistik ===")
-    count_vita_dagtid = sum(1 for _, text, _, _ in all_rows if text == "VITA dagtid")
-    print("Antal 'VITA dagtid':", count_vita_dagtid)
-
-    count_weekend_or_holiday_vita_dagtid = sum(
-        1 for _, text, weekend, holiday in all_rows
-        if text == "VITA dagtid" and (weekend or holiday)
-    )
-    print("Antal 'VITA dagtid' i weekend eller helligdag:", count_weekend_or_holiday_vita_dagtid)
-
-    print("=== Summeret statistik ===") 
+    if args.find:
+        print("\n=== Specifik statistik for --find ===")
+        for term in args.find:
+            total, woh, ud, ud_woh = stats_for_term(all_rows, term)
+            print(f"Søgeord: {term}")
+            print(f"  Total forekomster: {total}")
+            print(f"  Forekomster i weekend/helligdag: {woh}")
+            print(f"  Unikke datoer med term: {ud}")
+            print(f"  Unikke datoer i weekend/helligdag: {ud_woh}")
+            
+    print("\n=== Summeret statistik ===") 
     non_time_rows = filter_non_time_rows(all_rows)
-    counts = Counter(text for _, text, _, _ in non_time_rows)
+    counts = Counter(text for _, text, _, _, _ in non_time_rows)
     for text, n in counts.most_common():
         print(n, text)
 
