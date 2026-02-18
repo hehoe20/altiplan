@@ -1,33 +1,58 @@
 #!/usr/bin/env python3
-import unicodedata
+"""
+Altiplan scraper + offline parsing (raw JSON)
+
+Design:
+- Online scraping stores ONE row per date (smaller JSON):
+    [date_iso, weekend_bool, holiday_bool, ps_inner_html]
+- Line parsing runs OFFLINE on ps when needed (stats / find / optional expanded output).
+
+Raw JSON format (no backwards compatibility):
+    ["YYYY-MM-DD", true/false, true/false, "<html...>"]
+"""
 import argparse
 import sys
-import requests
 import re
 import json
+import unicodedata
 import datetime as dt
 from urllib.parse import urljoin
+from collections import Counter, defaultdict
+
+from typing import Optional, List
+import requests
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
-from collections import Counter
 
+# tillad piping af std.output fra --expand-output 
+sys.stdout.reconfigure(encoding="utf-8")
+
+# -----------------------------
+# URLs
+# -----------------------------
 BASE = "https://login.altiplan.dk"
 LANDING = "/webmodul/"
 PERSONLIG = "/webmodul/personlig/"
 AJAX = "/webmodul/wordpress/wp-admin/admin-ajax.php"
+LOGOUT = "/webmodul/log-af/"
 
-TARGET_COOKIE_NAMES = {"PHPSESSID", "NSC_MC_TTM_mphjo.bmujqmbo*443"}
 
-ZERO_WIDTH_CATS = {"Cf"}  # format chars (inkl. zero-width)
+# -----------------------------
+# Parsing
+# -----------------------------
+ZERO_WIDTH_CATS = {"Cf"}  # unicode "format" chars (zero-width etc.)
 
-# Finder en vagtlinje: "07:45 - 15:30  100" evt. med ekstra tal til sidst
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
+TIME_LINE_START_RE = re.compile(r"^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
+
 SHIFT_RE = re.compile(
     r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b.*?(?=(\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b)|$)"
 )
 
+NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
+
 MONTH_MAP = {
-    # EN
+    # EN short + full
     "jan": 1, "january": 1,
     "feb": 2, "february": 2,
     "mar": 3, "march": 3,
@@ -41,26 +66,33 @@ MONTH_MAP = {
     "nov": 11, "november": 11,
     "dec": 12, "december": 12,
 
-    # DK (alm. forkortelser)
-    "jan": 1, "jan.": 1,
-    "feb": 2, "feb.": 2,
-    "mar": 3, "mar.": 3,
-    "apr": 4, "apr.": 4,
+    # DK forkortelser (med/uden punktum)
+    "jan.": 1, "feb.": 2, "mar.": 3, "apr.": 4,
+    "jun.": 6, "jul.": 7, "aug.": 8, "sep.": 9, "okt.": 10, "nov.": 11, "dec.": 12,
+    "okt": 10,
+
+    # DK særtilfælde
     "maj": 5,
-    "jun": 6, "jun.": 6,
-    "jul": 7, "jul.": 7,
-    "aug": 8, "aug.": 8,
-    "sep": 9, "sep.": 9,
-    "okt": 10, "okt.": 10,
-    "nov": 11, "nov.": 11,
-    "dec": 12, "dec.": 12,
+
+    # DK fulde navne
+    "januar": 1, "februar": 2, "marts": 3, "april": 4, "juni": 6, "juli": 7,
+    "august": 8, "september": 9, "oktober": 10, "november": 11, "december": 12,
 }
 
-def normalize_month_token(tok: str) -> str:
-    t = tok.strip().lower()
-    # fjern trailing punktum hvis både varianter findes
-    return t
 
+def strip_invisible(s: str) -> str:
+    if s is None:
+        return ""
+    return "".join(ch for ch in s if unicodedata.category(ch) not in ZERO_WIDTH_CATS)
+
+
+def prev_year_month(y: int, m: int) -> tuple[int, int]:
+    return (y - 1, 12) if m == 1 else (y, m - 1)
+
+
+# -----------------------------
+# DK holidays (conservative)
+# -----------------------------
 def easter_sunday_gregorian(year: int) -> dt.date:
     """Anonymous Gregorian algorithm."""
     a = year % 19
@@ -70,81 +102,114 @@ def easter_sunday_gregorian(year: int) -> dt.date:
     e = b % 4
     f = (b + 8) // 25
     g = (b - f + 1) // 3
-    h = (19*a + b - d - g + 15) % 30
+    h = (19 * a + b - d - g + 15) % 30
     i = c // 4
     k = c % 4
-    l = (32 + 2*e + 2*i - h - k) % 7
-    m = (a + 11*h + 22*l) // 451
-    month = (h + l - 7*m + 114) // 31
-    day = ((h + l - 7*m + 114) % 31) + 1
+    l = (32 + 2 * e + 2 * i - h - k) % 7
+    m = (a + 11 * h + 22 * l) // 451
+    month = (h + l - 7 * m + 114) // 31
+    day = ((h + l - 7 * m + 114) % 31) + 1
     return dt.date(year, month, day)
+
 
 _holiday_cache: dict[int, set[dt.date]] = {}
 
+
 def dk_public_holidays(year: int) -> set[dt.date]:
     """
-    DK nationale helligdage (konservativt sæt):
+    DK nationale helligdage (konservativt):
       - Nytårsdag
       - Skærtorsdag, Langfredag, Påskedag, 2. Påskedag
-      - Kristi Himmelfartsdag
+      - Kristi Himmelfart
       - Pinsedag, 2. Pinsedag
       - Juledag, 2. Juledag
-    NB: Store Bededag er ikke med (afskaffet fra 2024). :contentReference[oaicite:1]{index=1}
     """
     if year in _holiday_cache:
         return _holiday_cache[year]
 
     e = easter_sunday_gregorian(year)
-    hol = set()
-
-    hol.add(dt.date(year, 1, 1))          # Nytår
-    hol.add(e - dt.timedelta(days=3))     # Skærtorsdag
-    hol.add(e - dt.timedelta(days=2))     # Langfredag
-    hol.add(e)                            # Påskedag
-    hol.add(e + dt.timedelta(days=1))     # 2. Påskedag
-    hol.add(e + dt.timedelta(days=39))    # Kristi Himmelfart
-    hol.add(e + dt.timedelta(days=49))    # Pinsedag
-    hol.add(e + dt.timedelta(days=50))    # 2. Pinsedag
-    hol.add(dt.date(year, 12, 25))        # Juledag
-    hol.add(dt.date(year, 12, 26))        # 2. Juledag
-
+    hol = {
+        dt.date(year, 1, 1),
+        e - dt.timedelta(days=3),
+        e - dt.timedelta(days=2),
+        e,
+        e + dt.timedelta(days=1),
+        e + dt.timedelta(days=39),
+        e + dt.timedelta(days=49),
+        e + dt.timedelta(days=50),
+        dt.date(year, 12, 25),
+        dt.date(year, 12, 26),
+    }
     _holiday_cache[year] = hol
     return hol
 
-def _strip_invisible(s: str) -> str:
-    return "".join(ch for ch in s if unicodedata.category(ch) not in ZERO_WIDTH_CATS)
 
+def is_weekend(d: dt.date) -> bool:
+    return d.weekday() >= 5  # 5=lørdag, 6=søndag
+
+
+def parse_day_month(text: str) -> tuple[int, int]:
+    """
+    Finder en dato af formen 'DD. Mon' i tekst der kan indeholde ekstra ting som '2. pinsedag'.
+    Vælger den SENESTE forekomst hvor 'Mon' faktisk er en måned i MONTH_MAP.
+    """
+    t = strip_invisible(" ".join((text or "").split()))
+    matches = re.findall(r"(\d{1,2})\.\s*([A-Za-zÆØÅæøå\.]+)", t)
+    if not matches:
+        raise ValueError(f"Kunne ikke parse dag/måned fra: {text!r}")
+
+    for day_s, mon_raw in reversed(matches):
+        day = int(day_s)
+        mon_tok = strip_invisible(mon_raw).strip().lower()
+        mon_tok = re.sub(r"[^a-zæøå\.]", "", mon_tok)
+
+        candidates = [
+            mon_tok,
+            mon_tok.rstrip("."),
+            mon_tok.rstrip(".")[:3],
+        ]
+
+        for c in candidates:
+            if c in MONTH_MAP:
+                return day, MONTH_MAP[c]
+
+    raise ValueError(f"Ingen gyldig måned fundet i: {text!r} (matches={matches!r})")
+
+
+# -----------------------------
+# Offline parsing of ps (innerHTML)
+# -----------------------------
 def split_multi_shifts(text_after_first_time: str) -> list[str]:
-    s = text_after_first_time.strip()
+    s = (text_after_first_time or "").strip()
     if not s:
         return []
     matches = [m.group(0).strip() for m in SHIFT_RE.finditer(s)]
     return matches if matches else [s]
 
+
 def split_labels(prefix: str) -> list[str]:
     """
-    Splitter prefix før første tid i "labels".
+    Splitter prefix før første tid i labels.
     Regler:
-      - tokens med '-' (fx O-an, BTY-sen) holdes som én label
-      - UPPERCASE token (fx VITA) kan kombineres med næste token (fx dagtid/nat) -> "VITA dagtid"
+      - tokens med '-' (fx O-an, BTY-sen) holdes samlet
+      - UPPERCASE token (fx VITA) kan kombineres med næste token (dagtid/nat) -> "VITA dagtid"
     """
-    toks = [t for t in prefix.split() if t]
-    out = []
+    toks = [t for t in (prefix or "").split() if t]
+    out: list[str] = []
     i = 0
     while i < len(toks):
         t = toks[i]
 
-        # Koder med bindestreg må ALDRIG splittes
+        # Koder med bindestreg må ikke splittes
         if "-" in t:
             out.append(t)
             i += 1
             continue
 
-        # "VITA dagtid" / "VITA nat" etc.
+        # "VITA dagtid" / "VITA nat"
         if t.isupper() and len(t) >= 2:
             if i + 1 < len(toks):
                 nxt = toks[i + 1]
-                # kombiner kun hvis nxt er "ord" (ikke tid, ikke tal, ikke uppercase kode)
                 if (not nxt.isupper()) and (not TIME_RANGE_RE.search(nxt)) and (not any(ch.isdigit() for ch in nxt)) and ("-" not in nxt):
                     out.append(f"{t} {nxt}")
                     i += 2
@@ -153,21 +218,17 @@ def split_labels(prefix: str) -> list[str]:
             i += 1
             continue
 
-        # fallback: behold token som selvstændig label
         out.append(t)
         i += 1
 
     return out
 
+
 def split_dash_pair(line: str) -> list[str]:
     """
     Splitter kun når '-' er separator med whitespace omkring, og IKKE hvis linjen indeholder tidsinterval.
-    Eksempler:
-      "bf -   700" -> ["bf", "-   700"]
-      "* -   *"    -> ["*", "-   *"]
-      "/ -   /"    -> ["/", "-   /"]
     """
-    s = line.strip()
+    s = (line or "").strip()
     if not s:
         return []
     if TIME_RANGE_RE.search(s):
@@ -176,28 +237,28 @@ def split_dash_pair(line: str) -> list[str]:
         left, right = re.split(r"\s-\s+", s, maxsplit=1)
         left = left.strip()
         right = right.rstrip()
-        out = []
+        out: list[str] = []
         if left:
             out.append(left)
         if right:
-            out.append("- " + right)  # bevar bindestregen som eget element
+            out.append("- " + right)
         return out or [s]
     return [s]
+
 
 def extract_time_lines(time_p: Tag) -> list[str]:
     """
     1) Split på <br> ved at gå DOM children igennem
-    2) Split også på indlejrede \r\n i tekstnoder
+    2) Split også på indlejrede \\r\\n i tekstnoder
     3) Hvis en linje indeholder tidsinterval: split til labels + shifts
     4) Ellers: split "bf - 700" type
     """
-    # 1) rå segmenter adskilt af <br>
-    segments = []
-    buf = []
+    segments: list[str] = []
+    buf: list[str] = []
 
     for node in time_p.contents:
         if isinstance(node, Tag) and node.name == "br":
-            seg = _strip_invisible("".join(buf)).strip()
+            seg = strip_invisible("".join(buf)).strip()
             if seg:
                 segments.append(seg)
             buf = []
@@ -209,125 +270,146 @@ def extract_time_lines(time_p: Tag) -> list[str]:
             except Exception:
                 pass
 
-    tail = _strip_invisible("".join(buf)).strip()
+    tail = strip_invisible("".join(buf)).strip()
     if tail:
         segments.append(tail)
 
-    # 2) split segmenter yderligere på \r\n / \n (så "...\r\n15:30 - ..." bliver to linjer)
-    lines0 = []
+    # split segmenter på \r\n / \n
+    lines0: list[str] = []
     for seg in segments:
         for sub in seg.splitlines():
-            sub = _strip_invisible(sub).strip()
+            sub = strip_invisible(sub).strip()
             if sub:
                 lines0.append(sub)
 
-    # 3) postprocess til endelige linjer
-    out = []
+    out: list[str] = []
     for ln in lines0:
         m = TIME_RANGE_RE.search(ln)
         if m:
             prefix = ln[:m.start()].strip()
             rest = ln[m.start():].strip()
-
-            # labels fra prefix
             if prefix:
                 out.extend(split_labels(prefix))
-
-            # shifts fra rest (kan være 1..N)
             out.extend(split_multi_shifts(rest))
         else:
             out.extend(split_dash_pair(ln))
 
     return [x for x in (s.strip() for s in out) if x]
 
-def parse_day_month(text: str) -> tuple[int, int]:
+
+def extract_time_lines_from_ps(ps_html: str) -> list[str]:
+    soup = BeautifulSoup(f"<p>{ps_html or ''}</p>", "html.parser")
+    p = soup.p
+    if not p:
+        return []
+    return extract_time_lines(p)
+
+
+def iter_expanded_rows(raw_rows: list[list]):
     """
-    Finder en dato af formen 'DD. Mon' i tekst der kan indeholde ekstra ting som '2. pinsedag'.
-    Vælger den SENESTE forekomst hvor 'Mon' faktisk er en måned i MONTH_MAP.
+    Yields expanded rows:
+        [date_iso, ln, weekend, holiday, ps]
+    from raw rows:
+        [date_iso, weekend, holiday, ps]
     """
-    t = _strip_invisible(" ".join(text.split()))
+    for r in raw_rows:
+        if not (isinstance(r, list) and len(r) == 4):
+            continue
+        date_iso, weekend, holiday, ps = r
+        for ln in extract_time_lines_from_ps(ps):
+            yield [date_iso, ln, bool(weekend), bool(holiday), ps]
 
-    matches = re.findall(r"(\d{1,2})\.\s*([A-Za-zÆØÅæøå\.]+)", t)
-    if not matches:
-        raise ValueError(f"Kunne ikke parse dag/måned fra: {text!r}")
 
-    # Gå baglæns og vælg første match der kan mappes til en måned
-    for day_s, mon_raw in reversed(matches):
-        day = int(day_s)
+def filter_non_time_expanded(expanded_rows):
+    for date_iso, text, weekend, holiday, ps in expanded_rows:
+        if not TIME_LINE_START_RE.search(text or ""):
+            yield [date_iso, text, weekend, holiday, ps]
 
-        mon_tok = _strip_invisible(mon_raw).strip().lower()
-        mon_tok = re.sub(r"[^a-zæøå\.]", "", mon_tok)
 
-        candidates = [
-            mon_tok,
-            mon_tok.rstrip("."),
-            mon_tok.rstrip(".")[:3],  # fx 'oktober' -> 'okt'
-        ]
-
-        for c in candidates:
-            if c in MONTH_MAP:
-                return day, MONTH_MAP[c]
-
-    # Hvis vi ender her, var der matches, men ingen af dem var en gyldig måned
-    raise ValueError(f"Ingen gyldig måned fundet i: {text!r} (matches={matches!r})")
-
-def is_weekend(d: dt.date) -> bool:
-    return d.weekday() >= 5  # 5=lørdag, 6=søndag
-
-def count_by_text(rows):
+def stats_for_terms(raw_rows: list[list], terms: list[str]) -> dict[str, dict]:
     """
-    rows: list af [date_iso, text, weekend_bool, holiday_bool]
-    return: Counter hvor key=text og value=antal
+    Computes per-term stats on expanded text lines without materializing all expanded rows.
+    Stats are for exact-match on ln.
     """
-    return Counter(text for _, text, _, _ in rows)
+    wanted = set(terms)
+    total = Counter()
+    woh_total = Counter()
+    days = defaultdict(set)
+    days_woh = defaultdict(set)
 
-def filter_non_time_rows(rows):
+    for date_iso, text, weekend, holiday, ps in iter_expanded_rows(raw_rows):
+        if text not in wanted:
+            continue
+        total[text] += 1
+        days[text].add(date_iso)
+        if weekend or holiday:
+            woh_total[text] += 1
+            days_woh[text].add(date_iso)
+
+    out = {}
+    for t in terms:
+        out[t] = {
+            "term": t,
+            "total": int(total[t]),
+            "total_weekend_or_holiday": int(woh_total[t]),
+            "unique_days": len(days[t]),
+            "unique_days_weekend_or_holiday": len(days_woh[t]),
+        }
+    return out
+
+
+# -----------------------------
+# Raw JSON load/save
+# -----------------------------
+def load_raw_rows_from_json(path: str) -> list[list]:
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+
+    if not isinstance(data, list):
+        raise ValueError("Input JSON skal være en liste.")
+
+    for idx, row in enumerate(data[:200]):  # sanity-check
+        if not isinstance(row, list) or len(row) != 4:
+            raise ValueError(f"Ugyldigt row-format ved index {idx}: forvent 4 felter, fik {row!r}")
+        if not isinstance(row[0], str) or not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row[0]):
+            raise ValueError(f"Ugyldig dato ved index {idx}: {row[0]!r}")
+        if not isinstance(row[1], bool) or not isinstance(row[2], bool) or not isinstance(row[3], str):
+            raise ValueError(f"Ugyldige typer ved index {idx}: {row!r}")
+
+    return data
+
+
+def save_raw_rows_to_json(path: str, rows: list[list]) -> None:
+    with open(path, "w", encoding="utf-8") as f:
+        json.dump(rows, f, ensure_ascii=False, indent=2)
+
+
+# -----------------------------
+# Online fetch (login + scrape)
+# -----------------------------
+def fetch_raw_rows_via_login(
+    afdeling: str,
+    brugernavn: str,
+    password: str,
+    months: int,
+    insecure: bool,
+) -> list[list]:
     """
-    rows: list af [date_iso, text, weekend_bool, holiday_bool]
-    returnerer kun rækker hvor text IKKE starter med et tidsinterval
+    Returns raw rows:
+        [date_iso, weekend_bool, holiday_bool, ps_inner_html]
     """
-    return [r for r in rows if not TIME_RANGE_RE.search(r[1] or "")]
-
-def stats_for_term(rows, term: str):
-    total = sum(1 for _, text, _, _, _ in rows if text == term)
-    weekend_or_holiday = sum(1 for _, text, weekend, holiday, _ in rows if text == term and (weekend or holiday))
-    unique_days = len({date_iso for date_iso, text, _, _, _ in rows if text == term})
-    unique_days_weekend_or_holiday = len({date_iso for date_iso, text, weekend, holiday, _ in rows if text == term and (weekend or holiday)})
-    return total, weekend_or_holiday, unique_days, unique_days_weekend_or_holiday
-
-def main():
-    ap = argparse.ArgumentParser(description="Altiplan login via WP admin-ajax + ekstra ajax-kald")
-    ap.add_argument("--afdeling", required=True, help="Afd (fx od207)")
-    ap.add_argument("--brugernavn", required=True)
-    ap.add_argument("--password", required=True)
-    ap.add_argument("--savefile", default=None,
-                help="Gem all_rows som JSON til denne fil (fx rows.json)")
-    ap.add_argument("--find", action="append", default=[],
-                help='Søgetekst til statistik. Kan angives flere gange. Ex: --find "VITA dagtid"')
-    ap.add_argument("--insecure", action="store_true",
-                    help="Svar til curl -k: disable TLS cert verification (frarådes)")
-    ap.add_argument("--months", type=int, default=1,
-                help="Antal måneder der skal hentes (int > 0). Default=1")
-    args = ap.parse_args()
-
-    if args.months <= 0:
-        print("--months skal være en int > 0", file=sys.stderr)
-        sys.exit(2)
-
-    verify_tls = not args.insecure
+    verify_tls = not insecure
     s = requests.Session()
-
-    # Samme “basis” som før
     s.headers.update({
-        "User-Agent": "Mozilla/5.0 (compatible; altiplan-login-script/1.0)",
+        "User-Agent": "Mozilla/5.0 (compatible; altiplan-login-script/3.0)",
         "Accept": "*/*",
     })
 
     landing_url = urljoin(BASE, LANDING)
     personlig_url = urljoin(BASE, PERSONLIG)
     ajax_url = urljoin(BASE, AJAX)
+    logout_url = urljoin(BASE, LOGOUT)
 
-    # Samme header-stil som tidligere (ingen ekstra "curl-only" headers)
     ajax_headers_landing = {
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
         "Origin": BASE,
@@ -343,64 +425,78 @@ def main():
         "Sec-Fetch-Site": "same-origin",
     }
 
+    # 1) landing (establish cookies)
+    r1 = s.get(landing_url, timeout=30, verify=verify_tls)
+    r1.raise_for_status()
+
+    # 2) login
+    login_data = {
+        "action": "submitButton",
+        "Afd": afdeling,
+        "Brugernavn": brugernavn,
+        "Password": password,
+        "rememberUser": "false",
+        "debug": "false",
+    }
+    r2 = s.post(ajax_url, data=login_data, headers=ajax_headers_landing, timeout=30, verify=verify_tls)
+    r2.raise_for_status()
+
+    # 3) personlig
+    r3 = s.get(personlig_url, timeout=30, verify=verify_tls)
+    r3.raise_for_status()
+
+    # 4) month view once up-front
+    r4 = s.post(ajax_url, data={"action": "alter_from_week_to_month"}, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
+    r4.raise_for_status()
+
+    raw_rows: list[list] = []
+    seen_dates: set[str] = set()
+
+    calendar_selector = "#grid-container-calendar-31, .grid-container-calendar-31"
+    expected_year = None
+    expected_month = None
+
     try:
-        # 1) GET landing page (etablerer ofte NSC_*/start-cookies)
-        r1 = s.get(landing_url, timeout=30, verify=verify_tls)
-        r1.raise_for_status()
+        for i in range(months):
+            # Force month view each iteration (stabilize DOM)
+            rv = s.post(ajax_url, data={"action": "alter_from_week_to_month"}, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
+            rv.raise_for_status()
 
-        # 2) POST login (matcher dit første curl)
-        login_data = {
-            "action": "submitButton",
-            "Afd": args.afdeling,
-            "Brugernavn": args.brugernavn,
-            "Password": args.password,
-            "rememberUser": "false",
-            "debug": "false",
-        }
-
-        r2 = s.post(ajax_url, data=login_data, headers=ajax_headers_landing, timeout=30, verify=verify_tls)
-        r2.raise_for_status()
-
-        # 3) GET personlig-side (flow-kontekst)
-        r3 = s.get(personlig_url, timeout=30, verify=verify_tls)
-        r3.raise_for_status()
-
-        # 4) POST: alter_from_week_to_month
-        alter_data = {"action": "alter_from_week_to_month"}
-        r4 = s.post(ajax_url, data=alter_data, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
-        r4.raise_for_status()
-
-        all_rows = []
-
-        calendar_selector = "#grid-container-calendar-31, .grid-container-calendar-31"
-
-        for i in range(args.months):
-            # 5a) GET personlig (HTML)
             r5_get = s.get(personlig_url, timeout=30, verify=verify_tls)
             r5_get.raise_for_status()
-            soup = BeautifulSoup(r5_get.text, "html.parser")
 
-            # 5c) data-date fra #pp-bottom-bar inde i #calendar-wrapper-id
-            wrapper = soup.select_one("#calendar-wrapper-id")
-            bottom_bar = wrapper.select_one("#pp-bottom-bar") if wrapper else None
-            data_date_str = bottom_bar.get("data-date") if bottom_bar else None  # fx "20260126"
+            # Fix at altiplan bruger ikke konsekvent valide html tags </br> <br> og linjeskift \r\n -> skift alle til <br/>
+            html = r5_get.text.replace("</br>", "<br/>").replace("<br>", "<br/>").replace("\r\n", "<br/>")
+            soup = BeautifulSoup(html, "html.parser")
 
-            if not data_date_str or not re.fullmatch(r"\d{8}", data_date_str):
-                raise RuntimeError(f"Kunne ikke finde gyldig data-date i iteration {i+1}/{args.months}: {data_date_str!r}")
+            # data-date anchor (best-effort)
+            bottom_bar = soup.select_one("#pp-bottom-bar")
+            data_date_str = bottom_bar.get("data-date") if bottom_bar else None  # "YYYYMMDD"
 
-            anchor_year = int(data_date_str[0:4])
-            anchor_month = int(data_date_str[4:6])
+            if data_date_str and re.fullmatch(r"\d{8}", data_date_str):
+                anchor_year = int(data_date_str[0:4])
+                anchor_month = int(data_date_str[4:6])
+                if expected_year is None:
+                    expected_year, expected_month = anchor_year, anchor_month
+            else:
+                if expected_year is None:
+                    snippet = r5_get.text[:600]
+                    raise RuntimeError(
+                        f"Mangler data-date i iteration {i+1}/{months} og ingen fallback muligt. "
+                        f"data_date={data_date_str!r}. Snippet:\n{snippet}"
+                    )
+                anchor_year, anchor_month = expected_year, expected_month
 
             grid_div = soup.select_one(calendar_selector)
             if grid_div is None:
-                raise RuntimeError(f"Kunne ikke finde calendar grid: {calendar_selector} (iteration {i+1}/{args.months})")
+                raise RuntimeError(f"Kunne ikke finde calendar grid: {calendar_selector} (iteration {i+1}/{months})")
 
-            # Find alle day-cells
+            # all calendar cells
             day_cells = grid_div.select("div.grid-item-calendar-month")
             if not day_cells:
-                day_cells = grid_div.find_all("div", class_=re.compile(r"\bgrid-item-calendar-month\b"))
+                raise RuntimeError(f"Ingen calendar cells fundet (iteration {i+1}/{months}).")
 
-            # Filtrer til "kun denne måned": skip last-month-item/next-month-item
+            # this-month cells only
             month_cells = []
             for cell in day_cells:
                 cls = cell.get("class", [])
@@ -409,110 +505,248 @@ def main():
                 month_cells.append(cell)
 
             if not month_cells:
-                raise RuntimeError(f"Ingen this-month cells (iteration {i+1}/{args.months}).")
+                raise RuntimeError(f"Ingen this-month cells (iteration {i+1}/{months}).")
 
-            # Fastlæg month/year for denne måneds view:
-            # Vi tager måneden fra første this-month cell og justerer år ift anchor (årsskifte).
             first_date_p = month_cells[0].select_one("p.grid-item-date")
             if first_date_p is None:
-                raise RuntimeError(f"Mangler p.grid-item-date i første this-month cell (iteration {i+1}/{args.months})")
+                raise RuntimeError(f"Mangler p.grid-item-date i første this-month cell (iteration {i+1}/{months}).")
 
             _, current_month = parse_day_month(first_date_p.get_text(" ", strip=True))
-
-            # Hvis current_month < anchor_month => vi er rullet ind i næste år (fx anchor=Dec, current=Jan)
             current_year = anchor_year + (1 if current_month < anchor_month else 0)
 
             holidays = dk_public_holidays(current_year)
 
-            # Byg rækker: dato + hver linje i teksten (splittet på <br>)
             for cell in month_cells:
                 date_p = cell.select_one("p.grid-item-date")
                 if date_p is None:
                     continue
 
-                # HTML-markeret helligdag (fx __holiday på dato <p>)
-                date_classes = date_p.get("class", [])
-                html_holiday = "__holiday" in date_classes
-
                 day, mon = parse_day_month(date_p.get_text(" ", strip=True))
                 d = dt.date(current_year, mon, day)
+                date_iso = d.isoformat()
 
+                if date_iso in seen_dates:
+                    continue
+
+                date_classes = date_p.get("class", [])
+                html_holiday = "__holiday" in date_classes
                 weekend = is_weekend(d)
                 holiday = html_holiday or (d in holidays)
 
-                time_p = cell.select_one("p.grid-item-time")
-                if time_p is None:
-                    continue
+                # robust selector for the time <p>
+                time_p = cell.select_one("p.grid-item-time, p[class*='grid-item-time']")
+                ps = time_p.decode_contents() if time_p else ""
 
-                #print("RAW_CELLS:", cell.prettify()[:800])
-                ps = time_p.decode_contents()
+                raw_rows.append([date_iso, weekend, holiday, ps])
+                seen_dates.add(date_iso)
 
-                lines = extract_time_lines(time_p)
+            # go previous month
+            r_prev = s.post(ajax_url, data={"action": "show_previous_month_hi"}, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
+            r_prev.raise_for_status()
 
-                for ln in lines:
-                    all_rows.append([d.isoformat(), ln, weekend, holiday, ps])
-                    
-            # 5d) POST ajax: show_previous_month_hi (skift måned for næste iteration)
-            prev_data = {"action": "show_previous_month_hi"}
-            r5_post = s.post(ajax_url, data=prev_data, headers=ajax_headers_personlig, timeout=30, verify=verify_tls)
-            r5_post.raise_for_status()
- 
-        # 6) Logout (reset server-side session) + ryd lokale cookies
-        logout_url = urljoin(BASE, "/webmodul/log-af/")
+            if expected_year is not None:
+                expected_year, expected_month = prev_year_month(expected_year, expected_month)
 
-        # Brug samme basisheaders som dine GETs
-        r6 = s.get(logout_url, timeout=30, verify=verify_tls)
-        r6.raise_for_status()
+    finally:
+        # 6) logout + clear cookies (best-effort)
+        try:
+            s.get(logout_url, timeout=30, verify=verify_tls)
+        except Exception:
+            pass
+        try:
+            s.cookies.clear()
+        except Exception:
+            pass
 
-        # Ryd cookies i klient-sessionen (requests.Session)
-        s.cookies.clear()
+    raw_rows.sort(key=lambda r: r[0])
+    return raw_rows
 
-    except requests.RequestException as e:
-        print(f"HTTP-fejl: {e}", file=sys.stderr)
-        sys.exit(1)
 
-    # Output cookies (som før)
-    jar = s.cookies
-    all_cookies = {c.name: c.value for c in jar}
+# -----------------------------
+# CLI / output
+# -----------------------------
+def build_arg_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(description="Altiplan: scrape af raw/rå kalender data og/eller kør offline stats på gemt JSON.")
+    ap.add_argument("--inputfile", default=None, help="Læs raw kalender rows fra JSON fil og spring login over")
+    ap.add_argument("--savefile", default=None, help="Gem raw kalender rows som JSON til den angivne fil")
 
-    relevant = {}
-    for name, value in all_cookies.items():
-        if name in TARGET_COOKIE_NAMES or name.startswith("NSC_") or name == "PHPSESSID":
-            relevant[name] = value
+    ap.add_argument("--find", action="append", default=[],
+                    help='Søgeord til statistik (præcis match). Kan angives flere gange. Ex: --find "VITA dagtid"')
 
+    ap.add_argument("--months", type=int, default=1,
+                    help="Antal måneder der skal hentes (int > 0). Bruges kun ved login. Default=1")
+
+    ap.add_argument("--afdeling", required=False, help="Afdelingskode (fx od207). Bruges kun ved login.")
+    ap.add_argument("--brugernavn", required=False, help="Bruges kun ved login.")
+    ap.add_argument("--password", required=False, help="Bruges kun ved login.")
+
+    ap.add_argument("--insecure", action="store_true",
+                    help="Svar til curl -k: disable TLS cert verification (frarådes). Bruges kun ved login.")
+
+    ap.add_argument("--expand-output", action="store_true",
+                    help="Print expanded rows som JSON til stdout (kan være stor), brug evt dato selektering.\r\nTillader ikke summary og find.")
+
+    ap.add_argument("--no-summary", dest="summary", action="store_false",
+                    help="Slå summeret statistik fra (default er at den vises).")
+    ap.set_defaults(summary=True)
+
+    ap.add_argument("--startdate", default=None,
+                    help="Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.")
+    ap.add_argument("--enddate", default=None,
+                    help="Slutdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.")
+
+    return ap
+
+
+def should_skip_summary_line(text: str) -> bool:
+    t = (text or "").strip()
+    if not t:
+        return True
+
+    # skip hvis starter med bestemte tegn
+    if t[0] in {"/", "-", "*", "%", "+"}:
+        return True
+
+    # skip hvis kun er 3 tal (000-999)
+    if NUM_3DIGITS_RE.match(t):
+        return True
+
+    return False
+
+
+def parse_iso_date(s: Optional[str]) -> Optional[dt.date]:
+    if not s:
+        return None
+    try:
+        return dt.date.fromisoformat(s)
+    except ValueError:
+        raise ValueError(f"Ugyldig dato: {s!r}. Brug format YYYY-MM-DD")
+
+
+def filter_raw_rows_by_date_range(raw_rows: List[List], start: Optional[dt.date], end: Optional[dt.date]) -> List[List]:
+    if start is None and end is None:
+        return raw_rows
+
+    out = []
+    for r in raw_rows:
+        if not (isinstance(r, list) and len(r) == 4):
+            continue
+        date_iso = r[0]
+        try:
+            d = dt.date.fromisoformat(date_iso)
+        except ValueError:
+            continue
+
+        if start is not None and d < start:
+            continue
+        if end is not None and d > end:
+            continue
+
+        out.append(r)
+
+    return out
+
+
+def main() -> None:
+    ap = build_arg_parser()
+    args = ap.parse_args()
+
+    # --- Output precedence ---
+    # savefile overrides expand-output
+    if args.savefile and args.expand_output:
+        print("Bemærk: --savefile overruler --expand-output (der printes ikke expanded JSON).", file=sys.stderr)
+        args.expand_output = False
+
+    # expand-output overrides find + summary (to keep stdout pure JSON)
+    if args.expand_output:
+        args.summary = False
+        args.find = []
+
+    # Acquire raw rows
+    if args.inputfile:
+        try:
+            raw_rows = load_raw_rows_from_json(args.inputfile)
+        except Exception as e:
+            print(f"Fejl ved læsning af inputfile: {e}", file=sys.stderr)
+            sys.exit(2)
+    else:
+        if args.months <= 0:
+            ap.error("--months skal være en int > 0")
+
+        missing = [name for name in ("afdeling", "brugernavn", "password") if not getattr(args, name)]
+        if missing:
+            ap.error(
+                "Mangler login-argumenter: " + ", ".join(f"--{m}" for m in missing) +
+                " (eller brug --inputfile <fil.json> for at springe login over)"
+            )
+
+        try:
+            raw_rows = fetch_raw_rows_via_login(
+                afdeling=args.afdeling,
+                brugernavn=args.brugernavn,
+                password=args.password,
+                months=args.months,
+                insecure=args.insecure,
+            )
+        except requests.RequestException as e:
+            print(f"HTTP-fejl: {e}", file=sys.stderr)
+            sys.exit(1)
+        except Exception as e:
+            print(f"Fejl: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # Save raw rows
     if args.savefile:
-        with open(args.savefile, "w", encoding="utf-8") as f:
-            json.dump(all_rows, f, ensure_ascii=False, indent=2)
-        print(f"\n=== Gemte output til: {args.savefile} ===")
+        try:
+            save_raw_rows_to_json(args.savefile, raw_rows)
+            print(f"=== Gemte raw output til: {args.savefile} ===")
+        except Exception as e:
+            print(f"Fejl ved gem til fil: {e}", file=sys.stderr)
+            sys.exit(2)
 
-    # print("=== Relevant cookies (name=value) ===")
-    # for k, v in relevant.items():
-    #     print(f"{k}={v}")
+    # Date range filter for stats
+    try:
+        start_d = parse_iso_date(args.startdate)
+        end_d = parse_iso_date(args.enddate)
+    except ValueError as e:
+        print(str(e), file=sys.stderr)
+        sys.exit(2)
 
-    # print("\n=== Login AJAX response (første 300 chars) ===")
-    # print(r2.text[:300])
+    if start_d and end_d and start_d > end_d:
+        print("--startdate må ikke være efter --enddate", file=sys.stderr)
+        sys.exit(2)
 
-    # print("\n=== alter_from_week_to_month AJAX response (første 200 chars) ===")
-    # print(r4.text[:200])
+    raw_rows_stats = filter_raw_rows_by_date_range(raw_rows, start_d, end_d)
 
-    # print(f"\n=== Calendar rows ({args.months} month) ===")
-    # print(json.dumps(all_rows, ensure_ascii=False, indent=2))
-
+    # --find stats (offline parsing)
     if args.find:
-        print("\n=== Specifik statistik for --find ===")
+        stats = stats_for_terms(raw_rows_stats, args.find)
+        print("\n=== Specifik statistik (--find, exact match) ===")
         for term in args.find:
-            total, woh, ud, ud_woh = stats_for_term(all_rows, term)
-            print(f"Søgeord: {term}")
-            print(f"  Total forekomster: {total}")
-            print(f"  Forekomster i weekend/helligdag: {woh}")
-            print(f"  Unikke datoer med term: {ud}")
-            print(f"  Unikke datoer i weekend/helligdag: {ud_woh}")
-            
-    print("\n=== Summeret statistik ===") 
-    non_time_rows = filter_non_time_rows(all_rows)
-    counts = Counter(text for _, text, _, _, _ in non_time_rows)
-    for text, n in counts.most_common():
-        print(n, text)
+            st = stats[term]
+            print(f"\nSøgeord: {st['term']}")
+            print(f"  Total forekomster: {st['total']}")
+            print(f"  Forekomster i weekend/helligdag: {st['total_weekend_or_holiday']}")
+            print(f"  Unikke datoer med term: {st['unique_days']}")
+            print(f"  Unikke datoer i weekend/helligdag: {st['unique_days_weekend_or_holiday']}")
+
+    # --summary: count non-time lines (labels etc.) across all expanded rows
+    if args.summary:
+        counts = Counter()
+        for row in filter_non_time_expanded(iter_expanded_rows(raw_rows_stats)):
+            counts[row[1]] += 1
+
+        print("\n=== Summeret statistik (ikke-tidslinjer) ===")
+        for text, n in counts.most_common():
+            if should_skip_summary_line(text):
+                continue
+            print(n, text)
+
+    # --expand-output: print expanded rows as JSON to stdout
+    if args.expand_output:
+        expanded = list(iter_expanded_rows(raw_rows_stats))
+        print(json.dumps(expanded, ensure_ascii=False, indent=2))
+
 
 if __name__ == "__main__":
     main()
