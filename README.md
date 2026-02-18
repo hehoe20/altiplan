@@ -42,11 +42,13 @@ Eksempler der anvender de gemte json data
 python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 2026-01-31
 ```
 ```bash
-python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 2026-01-31 --expand-output > single_lines.json
-```
-```bash
 python altiplan.py --inputfile altiplan.json --no-summary --startdate 2025-01-01 --enddate 2025-12-31 --find "VITA dagtid" --find "ITA dagtid"
 ```
 ```bash
 python altiplan.py --inputfile altiplan.json --no-filter --include-time
+```
+Eksporter data som enkelt linjer json - kan importeres i fx. excel.   
+formatet er [dato, tekst linje fra preparsing html, lørdag/søndag:true/false, helligdag:true/false, pre-parsing html]   
+```bash
+python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 2026-01-31 --expand-output > single_lines.json
 ```
