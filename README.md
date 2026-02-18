@@ -1,4 +1,6 @@
-Install python og requirements   
+# altiplan/hosinfo personlig statistik
+
+Installer først python og derefter requirements med pip
 ```bash
 pip install -r /path/to/requirements.txt
 ```
@@ -7,7 +9,7 @@ Kør for hjælp:
 ```bash
 C:\>python altiplan.py -h
 usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure] [--expand-output]
-                   [--no-summary] [--startdate STARTDATE] [--enddate ENDDATE]
+                   [--no-summary] [--no-filter] [--include-time] [--startdate STARTDATE] [--enddate ENDDATE]
 
 Altiplan: scrape af raw/rå kalender data og/eller kør offline stats på gemt JSON.
 
@@ -25,6 +27,8 @@ optional arguments:
   --insecure            Svar til curl -k: disable TLS cert verification (frarådes). Bruges kun ved login.
   --expand-output       Print expanded rows som JSON til stdout (kan være stor), brug evt dato selektering. Tillader ikke summary og find.
   --no-summary          Slå summeret statistik fra (default er at den vises).
+  --no-filter           Slå filtrering fra i summary (default filtrerer linjer fra som starter med matematiske operatorer eller er rene 3-cifrede tal).
+  --include-time        Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).
   --startdate STARTDATE
                         Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
   --enddate ENDDATE     Slutdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
