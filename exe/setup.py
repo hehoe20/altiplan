@@ -7,6 +7,7 @@ options = {
             "lxml",
             "requests",
             "bs4",
+            "urllib3",
         ],
         "includes": [
             "lxml._elementpath",
