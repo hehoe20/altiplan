@@ -590,6 +590,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
                     help="Slå summeret statistik fra (default er at den vises).")
     ap.set_defaults(summary=True)
 
+    ap.add_argument("--no-filter", action="store_true",
+                    help="Slå filtrering fra i summary (default filtrerer linjer som /,-,*,%,+, og rene 3-cifrede tal).")
+    ap.add_argument("--include-time", action="store_true",
+                help="Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).")
+
     ap.add_argument("--startdate", default=None,
                     help="Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.")
     ap.add_argument("--enddate", default=None,
@@ -733,15 +738,21 @@ def main() -> None:
     # --summary: count non-time lines (labels etc.) across all expanded rows
     if args.summary:
         counts = Counter()
-        for row in filter_non_time_expanded(iter_expanded_rows(raw_rows_stats)):
+        
+        rows_iter = iter_expanded_rows(raw_rows_stats)
+        if not args.include_time:
+            rows_iter = filter_non_time_expanded(rows_iter)
+
+        for row in rows_iter:
+            # row = [date_iso, text, weekend, holiday, ps]
             counts[row[1]] += 1
 
         print("\n=== Summeret statistik (ikke-tidslinjer) ===")
         for text, n in counts.most_common():
-            if should_skip_summary_line(text):
+            if not args.no_filter and should_skip_summary_line(text):
                 continue
             print(n, text)
-
+    
     # --expand-output: print expanded rows as JSON to stdout
     if args.expand_output:
         expanded = list(iter_expanded_rows(raw_rows_stats))
