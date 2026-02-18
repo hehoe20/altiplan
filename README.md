@@ -1,6 +1,10 @@
 # altiplan/hosinfo personlig statistik
 ![](https://github.com/hehoe20/altiplan/blob/main/Screenshot.jpg)
-Eksemplet ovenfor er personlig statistik for en 10 dages periode.
+Eksemplet ovenfor er personlig statistik for en 10 dages periode.   
+
+## alternativet til python
+Vil du ikke download og installere python mm nedenfor, kan du downloade altiplan.exe fra mappen exe. Den kan køres direkte på en windows computer.   
+Downloade evt også gui.exe fra mappen gui4exe og læg den i samme mappe som altiplan.exe   
 
 ## hvad skal du bruge:
 Installer først python og derefter requirements med pip
