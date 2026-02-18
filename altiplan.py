@@ -23,9 +23,11 @@ from typing import Optional, List
 import requests
 from bs4 import BeautifulSoup
 from bs4.element import NavigableString, Tag
+import urllib3
 
-# tillad piping af std.output fra --expand-output 
+# tillad piping af std.output fra --expand-output og slå warnings fra ved --insecure
 sys.stdout.reconfigure(encoding="utf-8")
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # -----------------------------
 # URLs
