@@ -1,5 +1,8 @@
 # altiplan/hosinfo personlig statistik
+![](https://github.com/hehoe20/altiplan/blob/main/Screenshot.jpg)
+Eksemplet ovenfor er personlig statistik for en 10 dages periode.
 
+## hvad skal du bruge:
 Installer først python og derefter requirements med pip
 ```bash
 pip install -r /path/to/requirements.txt
@@ -33,7 +36,7 @@ optional arguments:
                         Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
   --enddate ENDDATE     Slutdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
 ```
-Eksempel der henter de sidste 24 måneder og gemmer personlige kalenderdata til output.json
+Eksempel der henter de sidste 24 måneder og gemmer personlige kalenderdata til output.json (og for praktiske årsager og hastighed, da kan det anbefales at køre denne kommando én gang, med måske 48 mdr eller hvad man nu synes. Derfra kan man arbejde videre med data lokalt)
 ```bash
 python altiplan.py --afdeling DEPT --brugernavn USERNAME --password PASSWORD --find "VITA dagtid" --months 24 --savefile altiplan.json
 ```
