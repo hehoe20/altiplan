@@ -47,3 +47,6 @@ python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 20
 ```bash
 python altiplan.py --inputfile altiplan.json --no-summary --startdate 2025-01-01 --enddate 2025-12-31 --find "VITA dagtid" --find "ITA dagtid"
 ```
+```bash
+python altiplan.py --inputfile altiplan.json --no-filter --include-time
+```
