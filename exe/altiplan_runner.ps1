@@ -1,5 +1,5 @@
 # altiplan_runner.ps1
-# Spørger efter afdeling/brugernavn/password/fil + antal måneder (default 24) og kalder altiplan.exe
+# SpÃ¸rger efter afdeling/brugernavn/password/fil + antal mÃ¥neder (default 24) og kalder altiplan.exe
 
 $ErrorActionPreference = "Stop"
 
@@ -7,13 +7,13 @@ function Prompt-NonEmpty([string]$label) {
     while ($true) {
         $v = Read-Host $label
         if (-not [string]::IsNullOrWhiteSpace($v)) { return $v.Trim() }
-        Write-Host "Feltet må ikke være tomt." -ForegroundColor Yellow
+        Write-Host "Feltet mÃ¥ ikke vÃ¦re tomt." -ForegroundColor Yellow
     }
 }
 
 function Prompt-Months([int]$defaultMonths) {
     while ($true) {
-        $v = Read-Host "Antal måneder (Enter for default: $defaultMonths)"
+        $v = Read-Host "Antal mÃ¥neder (Enter for default: $defaultMonths)"
         if ([string]::IsNullOrWhiteSpace($v)) { return $defaultMonths }
 
         $v = $v.Trim()
@@ -38,7 +38,7 @@ $user = Prompt-NonEmpty "Brugernavn"
 # Password (skjult input)
 $secure = Read-Host "Kode (password)" -AsSecureString
 if ($secure.Length -eq 0) {
-    Write-Host "Password må ikke være tomt." -ForegroundColor Red
+    Write-Host "Password mÃ¥ ikke vÃ¦re tomt." -ForegroundColor Red
     exit 1
 }
 $passPlain = [Runtime.InteropServices.Marshal]::PtrToStringAuto(
@@ -56,52 +56,43 @@ if ([string]::IsNullOrWhiteSpace($save)) { $save = $defaultSave }
 $exePath = Join-Path $PSScriptRoot "altiplan.exe"
 if (-not (Test-Path $exePath)) {
     Write-Host "Kunne ikke finde altiplan.exe her: $exePath" -ForegroundColor Red
-    Write-Host "Læg altiplan.exe i samme mappe som dette script, eller ret \$exePath." -ForegroundColor Yellow
+    Write-Host "LÃ¦g altiplan.exe i samme mappe som dette script, eller ret \$exePath." -ForegroundColor Yellow
     exit 1
 }
 
-# Argumenter (ingen manuel quoting nødvendig)
-$args = @(
-    "--afdeling",   $dept
-    "--brugernavn", $user
-    "--password",   $passPlain
-    "--months",     "$months"
-    "--savefile",   $save
-)
-
-Write-Host ""
-Write-Host "Kører altiplan.exe..." -ForegroundColor Gray
-
-# Maskér password i det der printes
-$argsMasked = @()
-for ($i = 0; $i -lt $args.Count; $i++) {
-    if ($args[$i] -eq "--password" -and ($i + 1) -lt $args.Count) {
-        $argsMasked += "--password"
-        $argsMasked += "******"
-        $i++  # skip selve password-værdien
-        continue
-    }
-    $argsMasked += $args[$i]
+function Quote-Arg([string]$s) {
+    if ($null -eq $s) { return '""' }
+    # escape " til \" og wrap i "
+    $escaped = $s -replace '"', '\"'
+    return '"' + $escaped + '"'
 }
 
-Write-Host "$exePath $($argsMasked -join ' ')" -ForegroundColor DarkGray
+# byg en korrekt argument-streng (ALT quoter vi)
+$argString =
+    "--afdeling "   + (Quote-Arg $dept)     + " " +
+    "--brugernavn " + (Quote-Arg $user)     + " " +
+    "--password "   + (Quote-Arg $passPlain)+ " " +
+    "--months "     + (Quote-Arg "$months") + " " +
+    "--savefile "   + (Quote-Arg $save)
+
+# print en maskeret version (sÃ¥ password ikke vises)
+$argStringMasked = $argString -replace '(--password\s+)"[^"]*"', '$1"******"'
+
+Write-Host ""
+Write-Host "KÃ¸rer altiplan.exe..." -ForegroundColor Gray
+Write-Host "$exePath $argStringMasked" -ForegroundColor DarkGray
 Write-Host ""
 
-# Kør og vent (viser konsol-output fra exe)
-$proc = Start-Process -FilePath $exePath -ArgumentList $args -NoNewWindow -Wait -PassThru
+$proc = Start-Process -FilePath $exePath -ArgumentList $argString -NoNewWindow -Wait -PassThru
 $exitCode = $proc.ExitCode
 
 if ($exitCode -eq 0) {
-    Write-Host "Færdig. Output gemt: $save" -ForegroundColor Green
+    Write-Host "FÃ¦rdig. Output gemt: $save" -ForegroundColor Green
 } else {
     Write-Host "Fejl. Exit code: $exitCode" -ForegroundColor Red
 }
 
-# Pause før luk
+# Pause fÃ¸r luk
 Read-Host "Tryk Enter for at lukke"
 
 exit $exitCode
-
-
-
-
