@@ -591,7 +591,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.set_defaults(summary=True)
 
     ap.add_argument("--no-filter", action="store_true",
-                    help="Slå filtrering fra i summary (default filtrerer linjer som /,-,*,%,+, og rene 3-cifrede tal).")
+                    help="Slå filtrering fra i summary (default filtrerer linjer fra som starter med matematiske operatorer eller er rene 3-cifrede tal).")
     ap.add_argument("--include-time", action="store_true",
                 help="Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).")
 
