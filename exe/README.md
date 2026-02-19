@@ -2,8 +2,8 @@
 download altiplan.exe og altiplan_runner.ps1 til samme mappe   
 kør altiplan_runner.ps1 med powershell (evt via hø. klik og vælg kør med powershell)   
 Følg prompts, første gang, indtast credentials og generer json filen (hvis du vil arbejde videre med den, da må du ikke ændre filnavn, skal være default)   
-![](https://github.com/hehoe20/altiplan/tree/main/exe/Screenshot1.jpg)   
-![](https://github.com/hehoe20/altiplan/tree/main/exe/Screenshot2.jpg)    
+![](https://github.com/hehoe20/altiplan/blob/main/Exe/Screenshot1.jpg)   
+![](https://github.com/hehoe20/altiplan/blob/main/Exe/Screenshot2.jpg)    
 # py2exe compile - creates .exe but also multiple files in dist
 pip install py2exe      
 copy altiplan.py to this directory and run   
