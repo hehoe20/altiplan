@@ -73,7 +73,8 @@ $argString =
     "--brugernavn " + (Quote-Arg $user)     + " " +
     "--password "   + (Quote-Arg $passPlain)+ " " +
     "--months "     + (Quote-Arg "$months") + " " +
-    "--savefile "   + (Quote-Arg $save)
+    "--savefile "   + (Quote-Arg $save) + " " +
+    "--simple-parsing"
 
 # print en maskeret version (så password ikke vises)
 $argStringMasked = $argString -replace '(--password\s+)"[^"]*"', '$1"******"'
@@ -96,3 +97,6 @@ if ($exitCode -eq 0) {
 Read-Host "Tryk Enter for at lukke"
 
 exit $exitCode
+
+
+
