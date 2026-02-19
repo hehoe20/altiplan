@@ -573,8 +573,8 @@ def fetch_raw_rows_via_login(
 # -----------------------------
 def build_arg_parser() -> argparse.ArgumentParser:
     ap = argparse.ArgumentParser(
-        description="Altiplan: scrape rå kalender data og/eller kør offline stats på gemt JSON.",
-        epilog=BANNER,
+        epilog="Altiplan: scrape rå kalender data og/eller kør offline stats på gemt JSON.",
+        description=BANNER,
         formatter_class=argparse.RawTextHelpFormatter
     )
     ap.add_argument("--inputfile", default=None, help="Læs raw kalender rows fra JSON fil og spring login over")
