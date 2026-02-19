@@ -16,9 +16,9 @@ Kør for hjælp:
 ```bash
 C:\>python altiplan.py -h
 usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure] [--expand-output]
-                   [--no-summary] [--no-filter] [--include-time] [--startdate STARTDATE] [--enddate ENDDATE]
+                   [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
 
-Altiplan: scrape af raw/rå kalender data og/eller kør offline stats på gemt JSON.
+ALTIPLAN parser v1.0 til personlig statistik af Henrik Højgaard (c) 2026
 
 optional arguments:
   -h, --help            show this help message and exit
@@ -32,13 +32,17 @@ optional arguments:
                         Bruges kun ved login.
   --password PASSWORD   Bruges kun ved login.
   --insecure            Svar til curl -k: disable TLS cert verification (frarådes). Bruges kun ved login.
-  --expand-output       Print expanded rows som JSON til stdout (kan være stor), brug evt dato selektering. Tillader ikke summary og find.
+  --expand-output       Print expanded rows som JSON til stdout (kan være stor), brug evt dato selektering.
+                        Tillader ikke summary og find.
   --no-summary          Slå summeret statistik fra (default er at den vises).
   --no-filter           Slå filtrering fra i summary (default filtrerer linjer fra som starter med matematiske operatorer eller er rene 3-cifrede tal).
   --include-time        Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).
+  --simple-parsing      Brug simpel offline parsing af ps (split kun på <br/> og linjeskift).
   --startdate STARTDATE
                         Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
   --enddate ENDDATE     Slutdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.
+
+Altiplan: scrape rå kalender data og/eller kør offline stats på gemt JSON.
 ```
 Eksempel der henter de sidste 24 måneder og gemmer personlige kalenderdata til output.json (og for praktiske årsager og hastighed, da kan det anbefales at køre denne kommando én gang, med måske 48 mdr eller hvad man nu synes. Derfra kan man arbejde videre med data lokalt)
 ```bash
