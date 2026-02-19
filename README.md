@@ -1,5 +1,5 @@
 # altiplan/hosinfo personlig statistik
-![](https://github.com/hehoe20/altiplan/blob/main/Screenshot.jpg)
+![](https://github.com/hehoe20/altiplan/blob/main/Screenshot.jpg?raw=true)
 Eksemplet ovenfor er personlig statistik for en 10 dages periode.   
 
 ## alternativet til python
