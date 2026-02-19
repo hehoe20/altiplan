@@ -22,7 +22,6 @@ from collections import Counter, defaultdict
 from typing import Optional, List
 import requests
 from bs4 import BeautifulSoup
-from bs4.element import NavigableString, Tag
 import urllib3
 
 # tillad piping af std.output fra --expand-output og slå warnings fra ved --insecure
@@ -38,6 +37,10 @@ PERSONLIG = "/webmodul/personlig/"
 AJAX = "/webmodul/wordpress/wp-admin/admin-ajax.php"
 LOGOUT = "/webmodul/log-af/"
 
+# -----------------------------
+# Version/banner
+# -----------------------------
+BANNER = "ALTIPLAN parser v1.0 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
@@ -46,12 +49,11 @@ ZERO_WIDTH_CATS = {"Cf"}  # unicode "format" chars (zero-width etc.)
 
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 TIME_LINE_START_RE = re.compile(r"^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
-
+NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
+BR_SPLIT_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 SHIFT_RE = re.compile(
     r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b.*?(?=(\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b)|$)"
 )
-
-NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
 
 MONTH_MAP = {
     # EN short + full
@@ -181,6 +183,7 @@ def parse_day_month(text: str) -> tuple[int, int]:
 # -----------------------------
 # Offline parsing of ps (innerHTML)
 # -----------------------------
+# split_multi_shifts: Mest “sikkerhedsnet”. Hvis en tid allerede er på hver sin <br/>, kan man i praksis ofte undvære den. Men den hjælper hvis der stadig kommer en linje som: "07:45 - 15:30 100 15:30 - 22:00 100"
 def split_multi_shifts(text_after_first_time: str) -> list[str]:
     s = (text_after_first_time or "").strip()
     if not s:
@@ -189,6 +192,7 @@ def split_multi_shifts(text_after_first_time: str) -> list[str]:
     return matches if matches else [s]
 
 
+# split_labels: hvis man vil have BTY-an og BTY-sen som hver sit element, selv om de står på samme linje (eller hvis en upstream fejl gør at de bliver samlet).
 def split_labels(prefix: str) -> list[str]:
     """
     Splitter prefix før første tid i labels.
@@ -226,6 +230,7 @@ def split_labels(prefix: str) -> list[str]:
     return out
 
 
+# split_dash_pair: nødvendig hvis man vil have bf og - 700 som hver sit element, selv om de står på samme <br/>-linje.
 def split_dash_pair(line: str) -> list[str]:
     """
     Splitter kun når '-' er separator med whitespace omkring, og IKKE hvis linjen indeholder tidsinterval.
@@ -247,39 +252,27 @@ def split_dash_pair(line: str) -> list[str]:
         return out or [s]
     return [s]
 
-
-def extract_time_lines(time_p: Tag) -> list[str]:
+# anvender de 3 funktioner ovenfor
+def extract_time_lines_from_ps(ps_html: str) -> list[str]:
     """
-    1) Split på <br> ved at gå DOM children igennem
-    2) Split også på indlejrede \\r\\n i tekstnoder
-    3) Hvis en linje indeholder tidsinterval: split til labels + shifts
-    4) Ellers: split "bf - 700" type
+    Simplified offline parsing:
+      - Split on <br/> (and <br>) and also on \r\n/\n
+      - Then apply existing line rules:
+          * If line contains time range: split into labels + shifts
+          * Else: split dash-pair like "bf -   700" into ["bf", "-   700"]
     """
-    segments: list[str] = []
-    buf: list[str] = []
+    s = ps_html or ""
+    # normaliser typiske varianter (sikkerhed, selvom du gør det online)
+    s = s.replace("</br>", "<br/>")
 
-    for node in time_p.contents:
-        if isinstance(node, Tag) and node.name == "br":
-            seg = strip_invisible("".join(buf)).strip()
-            if seg:
-                segments.append(seg)
-            buf = []
-        elif isinstance(node, NavigableString):
-            buf.append(str(node))
-        else:
-            try:
-                buf.append(node.get_text(" ", strip=False))
-            except Exception:
-                pass
+    # split på <br/>/<br>
+    parts = [strip_invisible(p).strip() for p in BR_SPLIT_RE.split(s)]
+    parts = [p for p in parts if p]
 
-    tail = strip_invisible("".join(buf)).strip()
-    if tail:
-        segments.append(tail)
-
-    # split segmenter på \r\n / \n
+    # split også på faktiske linjeskift inde i hver part
     lines0: list[str] = []
-    for seg in segments:
-        for sub in seg.splitlines():
+    for p in parts:
+        for sub in p.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
             sub = strip_invisible(sub).strip()
             if sub:
                 lines0.append(sub)
@@ -296,18 +289,26 @@ def extract_time_lines(time_p: Tag) -> list[str]:
         else:
             out.extend(split_dash_pair(ln))
 
-    return [x for x in (s.strip() for s in out) if x]
+    return [x for x in (t.strip() for t in out) if x]
 
 
-def extract_time_lines_from_ps(ps_html: str) -> list[str]:
-    soup = BeautifulSoup(f"<p>{ps_html or ''}</p>", "html.parser")
-    p = soup.p
-    if not p:
-        return []
-    return extract_time_lines(p)
+# simple parser uden funktionerne: split_dash_pair, split_labels, split_shifts
+def extract_time_lines_from_ps_simple(ps_html: str) -> list[str]:
+    s = (ps_html or "").replace("</br>", "<br/>")
+    parts = [strip_invisible(p).strip() for p in BR_SPLIT_RE.split(s)]
+    parts = [p for p in parts if p]
+
+    lines0 = []
+    for p in parts:
+        for sub in p.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            sub = strip_invisible(sub).strip()
+            if sub:
+                lines0.append(sub)
+
+    return lines0
 
 
-def iter_expanded_rows(raw_rows: list[list]):
+def iter_expanded_rows(raw_rows: list[list], parse_func=extract_time_lines_from_ps):
     """
     Yields expanded rows:
         [date_iso, ln, weekend, holiday, ps]
@@ -318,7 +319,7 @@ def iter_expanded_rows(raw_rows: list[list]):
         if not (isinstance(r, list) and len(r) == 4):
             continue
         date_iso, weekend, holiday, ps = r
-        for ln in extract_time_lines_from_ps(ps):
+        for ln in parse_func(ps):
             yield [date_iso, ln, bool(weekend), bool(holiday), ps]
 
 
@@ -328,7 +329,7 @@ def filter_non_time_expanded(expanded_rows):
             yield [date_iso, text, weekend, holiday, ps]
 
 
-def stats_for_terms(raw_rows: list[list], terms: list[str]) -> dict[str, dict]:
+def stats_for_terms(raw_rows: list[list], terms: list[str], parse_func=extract_time_lines_from_ps) -> dict[str, dict]:
     """
     Computes per-term stats on expanded text lines without materializing all expanded rows.
     Stats are for exact-match on ln.
@@ -339,7 +340,7 @@ def stats_for_terms(raw_rows: list[list], terms: list[str]) -> dict[str, dict]:
     days = defaultdict(set)
     days_woh = defaultdict(set)
 
-    for date_iso, text, weekend, holiday, ps in iter_expanded_rows(raw_rows):
+    for date_iso, text, weekend, holiday, ps in iter_expanded_rows(raw_rows, parse_func=parse_func):
         if text not in wanted:
             continue
         total[text] += 1
@@ -468,7 +469,10 @@ def fetch_raw_rows_via_login(
             r5_get.raise_for_status()
 
             # Fix at altiplan bruger ikke konsekvent valide html tags </br> <br> og linjeskift \r\n -> skift alle til <br/>
-            html = r5_get.text.replace("</br>", "<br/>").replace("<br>", "<br/>").replace("\r\n", "<br/>")
+            html = re.sub(r"</\s*br\s*>", "<br/>", r5_get.text, flags=re.IGNORECASE)
+            html = re.sub(r"<\s*br\s*>", "<br/>", html, flags=re.IGNORECASE)
+            html = html.replace("\r\n", "<br/>")
+
             soup = BeautifulSoup(html, "html.parser")
 
             # data-date anchor (best-effort)
@@ -568,7 +572,11 @@ def fetch_raw_rows_via_login(
 # CLI / output
 # -----------------------------
 def build_arg_parser() -> argparse.ArgumentParser:
-    ap = argparse.ArgumentParser(description="Altiplan: scrape af raw/rå kalender data og/eller kør offline stats på gemt JSON.")
+    ap = argparse.ArgumentParser(
+        description="Altiplan: scrape rå kalender data og/eller kør offline stats på gemt JSON.",
+        epilog=BANNER,
+        formatter_class=argparse.RawTextHelpFormatter
+    )
     ap.add_argument("--inputfile", default=None, help="Læs raw kalender rows fra JSON fil og spring login over")
     ap.add_argument("--savefile", default=None, help="Gem raw kalender rows som JSON til den angivne fil")
 
@@ -595,7 +603,9 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--no-filter", action="store_true",
                     help="Slå filtrering fra i summary (default filtrerer linjer fra som starter med matematiske operatorer eller er rene 3-cifrede tal).")
     ap.add_argument("--include-time", action="store_true",
-                help="Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).")
+                    help="Medtag også klokkeslæt-linjer i summary (default viser kun ikke-tidslinjer).")
+    ap.add_argument("--simple-parsing", action="store_true",
+                    help="Brug simpel offline parsing af ps (split kun på <br/> og linjeskift).")
 
     ap.add_argument("--startdate", default=None,
                     help="Startdato (inkl.), format YYYY-MM-DD. Filtrerer --summary/--find/--expand-output.")
@@ -657,6 +667,10 @@ def filter_raw_rows_by_date_range(raw_rows: List[List], start: Optional[dt.date]
 def main() -> None:
     ap = build_arg_parser()
     args = ap.parse_args()
+
+    # print banner kun hvis vi ikke skal outputte ren JSON på stdout
+    if not args.expand_output:
+        print(BANNER)
 
     # --- Output precedence ---
     # savefile overrides expand-output
@@ -724,10 +738,11 @@ def main() -> None:
         sys.exit(2)
 
     raw_rows_stats = filter_raw_rows_by_date_range(raw_rows, start_d, end_d)
+    parse_func = extract_time_lines_from_ps_simple if args.simple_parsing else extract_time_lines_from_ps
 
     # --find stats (offline parsing)
     if args.find:
-        stats = stats_for_terms(raw_rows_stats, args.find)
+        stats = stats_for_terms(raw_rows_stats, args.find, parse_func=parse_func)
         print("\n=== Specifik statistik (--find, exact match) ===")
         for term in args.find:
             st = stats[term]
@@ -741,7 +756,7 @@ def main() -> None:
     if args.summary:
         counts = Counter()
         
-        rows_iter = iter_expanded_rows(raw_rows_stats)
+        rows_iter = iter_expanded_rows(raw_rows_stats, parse_func=parse_func)
         if not args.include_time:
             rows_iter = filter_non_time_expanded(rows_iter)
 
@@ -757,7 +772,7 @@ def main() -> None:
     
     # --expand-output: print expanded rows as JSON to stdout
     if args.expand_output:
-        expanded = list(iter_expanded_rows(raw_rows_stats))
+        expanded = list(iter_expanded_rows(raw_rows_stats, parse_func=parse_func))
         print(json.dumps(expanded, ensure_ascii=False, indent=2))
 
 
