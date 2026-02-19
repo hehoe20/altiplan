@@ -50,6 +50,7 @@ ZERO_WIDTH_CATS = {"Cf"}  # unicode "format" chars (zero-width etc.)
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 TIME_LINE_START_RE = re.compile(r"^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
+THREE_DIGIT_PREFIX_RE = re.compile(r"^\d{3}")
 BR_SPLIT_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 SHIFT_RE = re.compile(
     r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b.*?(?=(\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b)|$)"
@@ -293,7 +294,7 @@ def extract_time_lines_from_ps(ps_html: str) -> list[str]:
 
 
 # simple parser uden funktionerne: split_dash_pair, split_labels, split_shifts
-def extract_time_lines_from_ps_simple(ps_html: str) -> list[str]:
+def extract_time_lines_from_ps_simple(ps_html: str, no_filter: bool = False) -> list[str]:
     s = (ps_html or "").replace("</br>", "<br/>")
     parts = [strip_invisible(p).strip() for p in BR_SPLIT_RE.split(s)]
     parts = [p for p in parts if p]
@@ -302,8 +303,14 @@ def extract_time_lines_from_ps_simple(ps_html: str) -> list[str]:
     for p in parts:
         for sub in p.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
             sub = strip_invisible(sub).strip()
-            if sub:
-                lines0.append(sub)
+            if not sub:
+                continue
+
+            # Kun filtrér 3-cifrede linjer hvis --no-filter IKKE er sat
+            if (not no_filter) and THREE_DIGIT_PREFIX_RE.match(sub):
+                continue
+
+            lines0.append(sub)
 
     return lines0
 
@@ -738,7 +745,11 @@ def main() -> None:
         sys.exit(2)
 
     raw_rows_stats = filter_raw_rows_by_date_range(raw_rows, start_d, end_d)
-    parse_func = extract_time_lines_from_ps_simple if args.simple_parsing else extract_time_lines_from_ps
+    
+    if args.simple_parsing:
+        parse_func = lambda ps: extract_time_lines_from_ps_simple(ps, no_filter=args.no_filter)
+    else:
+        parse_func = extract_time_lines_from_ps
 
     # --find stats (offline parsing)
     if args.find:
