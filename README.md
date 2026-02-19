@@ -50,7 +50,7 @@ python altiplan.py --afdeling DEPT --brugernavn USERNAME --password PASSWORD --f
 ```
 Eksempler der anvender de gemte json data
 ```bash
-python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 2026-01-31
+python altiplan.py --inputfile altiplan.json --startdate 2026-01-01 --enddate 2026-01-31 --simple-parsing
 ```
 ```bash
 python altiplan.py --inputfile altiplan.json --no-summary --startdate 2025-01-01 --enddate 2025-12-31 --find "VITA dagtid" --find "ITA dagtid"
