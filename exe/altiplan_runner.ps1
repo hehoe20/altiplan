@@ -8,8 +8,8 @@ $ErrorActionPreference = "Stop"
 
 function Prompt-RestartOrExit([int]$exitCode) {
     Write-Host ""
-    Write-Host "Ã˜nsker du at afslutte? Tryk A" -ForegroundColor Yellow
-    Write-Host "Ã˜nsker du at starte scriptet forfra? Tryk en vilkÃ¥rlig anden tast" -ForegroundColor Yellow
+    Write-Host "Ønsker du at afslutte? Tryk A" -ForegroundColor Yellow
+    Write-Host "Ønsker du at starte scriptet forfra? Tryk en vilkårlig anden tast" -ForegroundColor Yellow
 
     $k = [Console]::ReadKey($true)
     if ($k.KeyChar -eq 'A' -or $k.KeyChar -eq 'a') {
@@ -29,7 +29,7 @@ function Prompt-NonEmpty([string]$label) {
     while ($true) {
         $v = Read-Host $label
         if (-not [string]::IsNullOrWhiteSpace($v)) { return $v.Trim() }
-        Write-Host "Feltet mÃ¥ ikke vÃ¦re tomt." -ForegroundColor Yellow
+        Write-Host "Feltet må ikke være tomt." -ForegroundColor Yellow
     }
 }
 
@@ -47,7 +47,7 @@ function Prompt-YesNo([string]$label, [bool]$defaultYes) {
 
 function Prompt-Months([int]$defaultMonths) {
     while ($true) {
-        $v = Read-Host "Antal mÃ¥neder (Enter for default: $defaultMonths)"
+        $v = Read-Host "Antal måneder (Enter for default: $defaultMonths)"
         if ([string]::IsNullOrWhiteSpace($v)) { return $defaultMonths }
         $v = $v.Trim()
         $n = 0
@@ -72,7 +72,7 @@ function Prompt-Date([string]$label, [string]$defaultDate) {
 }
 
 function Prompt-FindTerms() {
-    $v = Read-Host 'SÃ¸geord til --find (flere adskilt af |). Enter for ingen'
+    $v = Read-Host 'Søgeord til --find (flere adskilt af |). Enter for ingen'
     if ([string]::IsNullOrWhiteSpace($v)) { return @() }
 
     $terms = $v -split '\|' | ForEach-Object { $_.Trim() } | Where-Object { $_ -ne "" }
@@ -81,7 +81,7 @@ function Prompt-FindTerms() {
 
 function Run-Altiplan([string]$exePath, [string]$argString, [string]$argStringMasked) {
     Write-Host ""
-    Write-Host "KÃ¸rer altiplan.exe..." -ForegroundColor Gray
+    Write-Host "Kører altiplan.exe..." -ForegroundColor Gray
     Write-Host "$exePath $argStringMasked" -ForegroundColor DarkGray
     Write-Host ""
 
@@ -102,7 +102,7 @@ Write-Host ""
 $exePath = Join-Path $PSScriptRoot "altiplan.exe"
 if (-not (Test-Path $exePath)) {
     Write-Host "Kunne ikke finde altiplan.exe her: $exePath" -ForegroundColor Red
-    Write-Host "LÃ¦g altiplan.exe i samme mappe som dette script." -ForegroundColor Yellow
+    Write-Host "Læg altiplan.exe i samme mappe som dette script." -ForegroundColor Yellow
     Read-Host "Tryk Enter for at lukke"
     exit 1
 }
@@ -111,7 +111,7 @@ while ($true) {
 
 	$useExisting = $false
 	if (Test-Path $defaultSave) {
-		$useExisting = Prompt-YesNo "altiplan.json findes pÃ¥ standard-sti: $defaultSave`nÃ˜nsker du at arbejde med tidligere gemte json?" $true
+		$useExisting = Prompt-YesNo "altiplan.json findes på standard-sti: $defaultSave`nØnsker du at arbejde med tidligere gemte json?" $true
 	}
 
 	if ($useExisting) {
@@ -124,6 +124,7 @@ while ($true) {
 		$argString = ""
 		$argString += "--inputfile " + (Quote-Arg $defaultSave) + " "
 		$argString += "--simple-parsing "
+		$argString += "--komb "
 		$argString += "--startdate " + (Quote-Arg $startDate) + " "
 		$argString += "--enddate "   + (Quote-Arg $endDate)   + " "
 
@@ -133,13 +134,13 @@ while ($true) {
 
 		$argString = $argString.Trim()
 
-		# Maskeret print (ingen password her, men behold mÃ¸nster)
+		# Maskeret print (ingen password her, men behold mønster)
 		$argStringMasked = $argString
 
 		$exitCode = Run-Altiplan $exePath $argString $argStringMasked
 
 		if ($exitCode -eq 0) {
-			Write-Host "FÃ¦rdig (offline). Input: $defaultSave" -ForegroundColor Green
+			Write-Host "Færdig (offline). Input: $defaultSave" -ForegroundColor Green
 		} else {
 			Write-Host "Fejl (offline). Exit code: $exitCode" -ForegroundColor Red
 		}
@@ -154,7 +155,7 @@ while ($true) {
 
 	$secure = Read-Host "Kode (password)" -AsSecureString
 	if ($secure.Length -eq 0) {
-		Write-Host "Password mÃ¥ ikke vÃ¦re tomt." -ForegroundColor Red
+		Write-Host "Password må ikke være tomt." -ForegroundColor Red
 		Read-Host "Tryk Enter for at lukke"
 		exit 1
 	}
@@ -176,13 +177,13 @@ while ($true) {
 		"--savefile "   + (Quote-Arg $save)     + " " +
 		"--simple-parsing"
 
-	# MaskÃ©r password i det der printes
+	# Maskér password i det der printes
 	$argStringMasked = $argString -replace '(--password\s+)"[^"]*"', '$1"******"'
 
 	$exitCode = Run-Altiplan $exePath $argString $argStringMasked
 
 	if ($exitCode -eq 0) {
-		Write-Host "FÃ¦rdig. Output gemt: $save" -ForegroundColor Green
+		Write-Host "Færdig. Output gemt: $save" -ForegroundColor Green
 	} else {
 		Write-Host "Fejl. Exit code: $exitCode" -ForegroundColor Red
 	}
