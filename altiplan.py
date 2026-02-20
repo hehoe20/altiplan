@@ -50,6 +50,7 @@ ZERO_WIDTH_CATS = {"Cf"}  # unicode "format" chars (zero-width etc.)
 TIME_RANGE_RE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 TIME_LINE_START_RE = re.compile(r"^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
+CODE_3DIGIT_RE = re.compile(r"\b\d{3}\b")
 THREE_DIGIT_PREFIX_RE = re.compile(r"^\d{3}")
 BR_SPLIT_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 SHIFT_RE = re.compile(
@@ -368,6 +369,92 @@ def stats_for_terms(raw_rows: list[list], terms: list[str], parse_func=extract_t
     return out
 
 
+def parse_komb_arg(s: str) -> list[str]:
+    """
+    Parse --komb "100|290|700" -> ["100","290","700"]
+    Tillader også at brugeren skriver med { } og spaces.
+    """
+    if s is None:
+        return []
+    t = (s or "").strip()
+    t = t.strip("{}").strip()
+    if not t:
+        return []
+    parts = [p.strip() for p in t.split("|")]
+    codes = [p for p in parts if p]
+    bad = [c for c in codes if not re.fullmatch(r"\d{3}", c)]
+    if bad:
+        raise ValueError(f"Ugyldige talkoder i --komb: {bad}. Skal være 3 cifre, fx 100|290")
+    # dedupe men bevar rækkefølge
+    seen = set()
+    out = []
+    for c in codes:
+        if c not in seen:
+            out.append(c)
+            seen.add(c)
+    return out
+
+
+def extract_codes_from_ps(ps_html: str) -> set[str]:
+    """
+    Robust udtræk af 3-cifrede koder fra ps:
+    - splitter på <br/>/<br> og linjeskift
+    - finder alle \b\d{3}\b tokens
+    """
+    s = strip_invisible(ps_html or "")
+    # normaliser br-varianter til <br/>
+    s = re.sub(r"</\s*br\s*>", "<br/>", s, flags=re.IGNORECASE)
+    s = re.sub(r"<\s*br\s*/?\s*>", "<br/>", s, flags=re.IGNORECASE)
+
+    parts = [p.strip() for p in s.split("<br/>")]
+    codes: set[str] = set()
+    for p in parts:
+        if not p:
+            continue
+        for sub in p.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
+            sub = sub.strip()
+            if not sub:
+                continue
+            for m in CODE_3DIGIT_RE.finditer(sub):
+                codes.add(m.group(0))
+    return codes
+
+
+def count_days_with_komb(raw_rows: list[list], komb_codes: list[str]) -> dict:
+    """
+    Tæller antal unikke dage hvor alle komb_codes forekommer i ps for dagen.
+    Returnerer også weekend/helligdag count og selve dato-listen.
+    """
+    if not komb_codes:
+        return {
+            "codes": [],
+            "days": 0,
+            "days_weekend_or_holiday": 0,
+            "dates": [],
+        }
+
+    want = set(komb_codes)
+    dates = []
+    dates_woh = []
+
+    for row in raw_rows:
+        if not (isinstance(row, list) and len(row) == 4):
+            continue
+        date_iso, weekend, holiday, ps = row
+        codes = extract_codes_from_ps(ps)
+        if want.issubset(codes):
+            dates.append(date_iso)
+            if weekend or holiday:
+                dates_woh.append(date_iso)
+
+    return {
+        "codes": komb_codes,
+        "days": len(dates),
+        "days_weekend_or_holiday": len(dates_woh),
+        "dates": dates,
+    }
+
+
 # -----------------------------
 # Raw JSON load/save
 # -----------------------------
@@ -593,6 +680,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     ap.add_argument("--months", type=int, default=1,
                     help="Antal måneder der skal hentes (int > 0). Bruges kun ved login. Default=1")
 
+    ap.add_argument(
+        "--komb",
+        nargs="?",            # 0 eller 1 værdi
+        const="100|290",      # hvis --komb gives uden værdi
+        default=None,         # hvis --komb ikke gives
+        help="Tæl dage hvor ALLE 3-cifrede koder forekommer. "
+             "Brug: --komb (default 100|290 sv.t døgnvagt) eller --komb 100|290|700"
+    )
+    
     ap.add_argument("--afdeling", required=False, help="Afdelingskode (fx od207). Bruges kun ved login.")
     ap.add_argument("--brugernavn", required=False, help="Bruges kun ved login.")
     ap.add_argument("--password", required=False, help="Bruges kun ved login.")
@@ -745,7 +841,16 @@ def main() -> None:
         sys.exit(2)
 
     raw_rows_stats = filter_raw_rows_by_date_range(raw_rows, start_d, end_d)
-    
+
+    if args.komb is not None:
+        komb_codes = parse_komb_arg(args.komb)  # args.komb er enten "100|290" eller brugerens streng
+        komb_stats = count_days_with_komb(raw_rows_stats, komb_codes)
+
+        print("\n=== Kombinations-optælling (--komb) ===")
+        print(f"Koder: {'|'.join(komb_stats['codes'])}")
+        print(f"Dage hvor alle koder forekommer: {komb_stats['days']}")
+        print(f"Heraf weekend/helligdag: {komb_stats['days_weekend_or_holiday']}")    
+
     if args.simple_parsing:
         parse_func = lambda ps: extract_time_lines_from_ps_simple(ps, no_filter=args.no_filter)
     else:
