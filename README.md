@@ -15,8 +15,8 @@ pip install -r /path/to/requirements.txt
 Kør for hjælp:
 ```bash
 C:\>python altiplan.py -h
-usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure] [--expand-output]
-                   [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
+usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
+                   [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
 
 ALTIPLAN parser v1.0 til personlig statistik af Henrik Højgaard (c) 2026
 
@@ -27,6 +27,7 @@ optional arguments:
   --savefile SAVEFILE   Gem raw kalender rows som JSON til den angivne fil
   --find FIND           Søgeord til statistik (præcis match). Kan angives flere gange. Ex: --find "VITA dagtid"
   --months MONTHS       Antal måneder der skal hentes (int > 0). Bruges kun ved login. Default=1
+  --komb [KOMB]         Tæl dage hvor ALLE 3-cifrede koder forekommer. Brug: --komb (default 100|290 sv.t døgnvagt) eller --komb 100|290|700
   --afdeling AFDELING   Afdelingskode (fx od207). Bruges kun ved login.
   --brugernavn BRUGERNAVN
                         Bruges kun ved login.
