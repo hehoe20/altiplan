@@ -40,7 +40,7 @@ LOGOUT = "/webmodul/log-af/"
 # -----------------------------
 # Version/banner
 # -----------------------------
-BANNER = "ALTIPLAN parser v1.2 til personlig statistik af Henrik Højgaard (c) 2026"
+BANNER = "ALTIPLAN parser v1.2.1 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
@@ -583,7 +583,12 @@ def fetch_raw_rows_via_login(
         "debug": "false",
     }
     r2 = s.post(ajax_url, data=login_data, headers=ajax_headers_landing, timeout=30, verify=verify_tls)
-    r2.raise_for_status()
+    login_txt = (r2.text or "").lower()
+
+    # typiske indikatorer (altiplan returnerer: "forkert login info")
+    bad_markers = ["forkert", "fejl", "invalid", "unauthorized", "denied", "mislykket", "login failed"]
+    if any(m in login_txt for m in bad_markers):
+        raise RuntimeError("Login fejlede, check afdeling/brugernavn/passsword.")
 
     # 3) personlig
     r3 = s.get(personlig_url, timeout=30, verify=verify_tls)
