@@ -19,7 +19,7 @@ import datetime as dt
 from urllib.parse import urljoin
 from collections import Counter, defaultdict
 
-from typing import Optional, List
+from typing import Optional, List, Tuple
 import requests
 from bs4 import BeautifulSoup
 import urllib3
@@ -40,7 +40,7 @@ LOGOUT = "/webmodul/log-af/"
 # -----------------------------
 # Version/banner
 # -----------------------------
-BANNER = "ALTIPLAN parser v1.0 til personlig statistik af Henrik Højgaard (c) 2026"
+BANNER = "ALTIPLAN parser v1.1 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
@@ -56,6 +56,7 @@ BR_SPLIT_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
 SHIFT_RE = re.compile(
     r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b.*?(?=(\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b)|$)"
 )
+TITLE_MONTH_YEAR_RE = re.compile(r"\b([A-Za-zÆØÅæøå\.]{3,})\s+(\d{4})\b")
 
 MONTH_MAP = {
     # EN short + full
@@ -95,6 +96,34 @@ def strip_invisible(s: str) -> str:
 def prev_year_month(y: int, m: int) -> tuple[int, int]:
     return (y - 1, 12) if m == 1 else (y, m - 1)
 
+
+def parse_month_year_from_title(soup: BeautifulSoup) -> Optional[Tuple[int, int]]:
+    """
+    Finder fx 'Jan 2026' fra h1.grid-calendar-title (eller generelt tekst).
+    Returnerer (year, month) eller None.
+    """
+    h1 = soup.select_one("h1.grid-calendar-title")
+    if not h1:
+        return None
+
+    txt = strip_invisible(h1.get_text(" ", strip=True))
+    m = TITLE_MONTH_YEAR_RE.search(txt)
+    if not m:
+        return None
+
+    mon_tok = m.group(1).strip().lower().rstrip(".")
+    year = int(m.group(2))
+
+    # prøv fuldt token, ellers første 3 bogstaver
+    if mon_tok not in MONTH_MAP:
+        mon3 = mon_tok[:3]
+        if mon3 in MONTH_MAP:
+            mon_tok = mon3
+        else:
+            return None
+
+    month = MONTH_MAP[mon_tok]
+    return (year, month)
 
 # -----------------------------
 # DK holidays (conservative)
@@ -550,9 +579,9 @@ def fetch_raw_rows_via_login(
     seen_dates: set[str] = set()
 
     calendar_selector = "#grid-container-calendar-31, .grid-container-calendar-31"
-    expected_year = None
-    expected_month = None
-
+    today = dt.date.today()
+    expected_year, expected_month = today.year, today.month
+    
     try:
         for i in range(months):
             # Force month view each iteration (stabilize DOM)
@@ -569,23 +598,28 @@ def fetch_raw_rows_via_login(
 
             soup = BeautifulSoup(html, "html.parser")
 
-            # data-date anchor (best-effort)
-            bottom_bar = soup.select_one("#pp-bottom-bar")
-            data_date_str = bottom_bar.get("data-date") if bottom_bar else None  # "YYYYMMDD"
+            anchor_year = None
+            anchor_month = None
 
+            # A) data-date (bedst)
+            bottom_bar = soup.select_one("#pp-bottom-bar")
+            data_date_str = bottom_bar.get("data-date") if bottom_bar else None
             if data_date_str and re.fullmatch(r"\d{8}", data_date_str):
                 anchor_year = int(data_date_str[0:4])
                 anchor_month = int(data_date_str[4:6])
-                if expected_year is None:
-                    expected_year, expected_month = anchor_year, anchor_month
-            else:
-                if expected_year is None:
-                    snippet = r5_get.text[:600]
-                    raise RuntimeError(
-                        f"Mangler data-date i iteration {i+1}/{months} og ingen fallback muligt. "
-                        f"data_date={data_date_str!r}. Snippet:\n{snippet}"
-                    )
+
+            # B) title fallback (ex Jan 2026)
+            if anchor_year is None or anchor_month is None:
+                my = parse_month_year_from_title(soup)
+                if my:
+                    anchor_year, anchor_month = my
+
+            # C) expected fallback (fra today/decrement)
+            if anchor_year is None or anchor_month is None:
                 anchor_year, anchor_month = expected_year, expected_month
+
+            # sync expected til det vi faktisk bruger (så vi ikke driver)
+            expected_year, expected_month = anchor_year, anchor_month
 
             grid_div = soup.select_one(calendar_selector)
             if grid_div is None:
