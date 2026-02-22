@@ -15,10 +15,12 @@ pip install -r /path/to/requirements.txt
 Kør for hjælp:
 ```bash
 C:\>python altiplan.py -h
-usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
-                   [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
+usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]]
+                   [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
+                   [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing]
+                   [--startdate STARTDATE] [--enddate ENDDATE]
 
-ALTIPLAN parser v1.0 til personlig statistik af Henrik Højgaard (c) 2026
+ALTIPLAN parser v1.1 til personlig statistik af Henrik Højgaard (c) 2026
 
 optional arguments:
   -h, --help            show this help message and exit
