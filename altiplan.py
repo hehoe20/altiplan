@@ -40,7 +40,7 @@ LOGOUT = "/webmodul/log-af/"
 # -----------------------------
 # Version/banner
 # -----------------------------
-BANNER = "ALTIPLAN parser v1.1 til personlig statistik af Henrik Højgaard (c) 2026"
+BANNER = "ALTIPLAN parser v1.2 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
@@ -452,37 +452,55 @@ def extract_codes_from_ps(ps_html: str) -> set[str]:
 def count_days_with_komb(raw_rows: list[list], komb_codes: list[str]) -> dict:
     """
     Tæller antal unikke dage hvor alle komb_codes forekommer i ps for dagen.
-    Returnerer også weekend/helligdag count og selve dato-listen.
+    Returnerer også weekend/helligdag count + fredag count.
     """
     if not komb_codes:
         return {
             "codes": [],
             "days": 0,
             "days_weekend_or_holiday": 0,
+            "fridays": 0,
+            "fridays_weekend_or_holiday": 0,
             "dates": [],
         }
 
     want = set(komb_codes)
     dates = []
-    dates_woh = []
+    woh_dates = []
+    fridays = 0
+    fridays_woh = 0
 
     for row in raw_rows:
         if not (isinstance(row, list) and len(row) == 4):
             continue
         date_iso, weekend, holiday, ps = row
+
         codes = extract_codes_from_ps(ps)
-        if want.issubset(codes):
-            dates.append(date_iso)
-            if weekend or holiday:
-                dates_woh.append(date_iso)
+        if not want.issubset(codes):
+            continue
+
+        dates.append(date_iso)
+
+        # fredag?
+        d = dt.date.fromisoformat(date_iso)
+        is_friday = (d.weekday() == 4)  # 0=man ... 4=fre
+
+        if weekend or holiday:
+            woh_dates.append(date_iso)
+            if is_friday:
+                fridays_woh += 1
+
+        if is_friday:
+            fridays += 1
 
     return {
         "codes": komb_codes,
         "days": len(dates),
-        "days_weekend_or_holiday": len(dates_woh),
+        "days_weekend_or_holiday": len(woh_dates),
+        "fridays": fridays,
+        "fridays_weekend_or_holiday": fridays_woh,
         "dates": dates,
     }
-
 
 # -----------------------------
 # Raw JSON load/save
@@ -884,7 +902,9 @@ def main() -> None:
         print(f"Koder: {'|'.join(komb_stats['codes'])}")
         print(f"Dage hvor alle koder forekommer: {komb_stats['days']}")
         print(f"Heraf weekend/helligdag: {komb_stats['days_weekend_or_holiday']}")    
-
+        print(f"Fredage (blandt matchende dage): {komb_stats['fridays']}")
+        print(f"Fredage som også er weekend/helligdag: {komb_stats['fridays_weekend_or_holiday']}")
+        
     if args.simple_parsing:
         parse_func = lambda ps: extract_time_lines_from_ps_simple(ps, no_filter=args.no_filter)
     else:
