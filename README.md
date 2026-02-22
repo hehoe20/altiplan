@@ -4,7 +4,7 @@ Eksemplet ovenfor er personlig statistik for en 10 dages periode.
 
 ## alternativet til python
 Vil du ikke download og installere python mm nedenfor, kan du downloade altiplan.exe fra mappen exe. Den kan køres direkte på en windows computer.   
-Downloade evt også gui.exe fra mappen gui4exe og læg den i samme mappe som altiplan.exe   
+Download evt også gui.exe fra mappen gui4exe og læg den i samme mappe som altiplan.exe, alternativt altiplan_runner.ps1 fra mappen exe.   
 
 ## hvad skal du bruge:
 Installer først python og derefter requirements med pip
