@@ -20,7 +20,7 @@ usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FI
                    [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing]
                    [--startdate STARTDATE] [--enddate ENDDATE]
 
-ALTIPLAN parser v1.1 til personlig statistik af Henrik Højgaard (c) 2026
+ALTIPLAN parser v1.2.1 til personlig statistik af Henrik Højgaard (c) 2026
 
 optional arguments:
   -h, --help            show this help message and exit
