@@ -7,7 +7,14 @@ Vil du ikke download og installere python mm nedenfor, kan du downloade altiplan
 Download evt også gui.exe fra mappen gui4exe og læg den i samme mappe som altiplan.exe, alternativt altiplan_runner.ps1 fra mappen exe.   
 
 ## hvad skal du bruge:
+Installer først python og derefter requirements med pip
 ```bash
+pip install -r /path/to/requirements.txt
+```
+
+Kør for hjælp:
+```bash
+C:\>python altiplan.py -h
 usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
                     [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
 
