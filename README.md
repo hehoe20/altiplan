@@ -7,20 +7,10 @@ Vil du ikke download og installere python mm nedenfor, kan du downloade altiplan
 Download evt også gui.exe fra mappen gui4exe og læg den i samme mappe som altiplan.exe, alternativt altiplan_runner.ps1 fra mappen exe.   
 
 ## hvad skal du bruge:
-Installer først python og derefter requirements med pip
-```bash
-pip install -r /path/to/requirements.txt
-```
+usage: altiplan.exe [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]] [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
+                    [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing] [--startdate STARTDATE] [--enddate ENDDATE]
 
-Kør for hjælp:
-```bash
-C:\>python altiplan.py -h
-usage: altiplan.py [-h] [--inputfile INPUTFILE] [--savefile SAVEFILE] [--find FIND] [--months MONTHS] [--komb [KOMB]]
-                   [--afdeling AFDELING] [--brugernavn BRUGERNAVN] [--password PASSWORD] [--insecure]
-                   [--expand-output] [--no-summary] [--no-filter] [--include-time] [--simple-parsing]
-                   [--startdate STARTDATE] [--enddate ENDDATE]
-
-ALTIPLAN parser v1.2.1 til personlig statistik af Henrik Højgaard (c) 2026
+ALTIPLAN parser v1.2.3 til personlig statistik af Henrik Højgaard (c) 2026
 
 optional arguments:
   -h, --help            show this help message and exit
