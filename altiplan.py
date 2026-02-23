@@ -40,23 +40,25 @@ LOGOUT = "/webmodul/log-af/"
 # -----------------------------
 # Version/banner
 # -----------------------------
-BANNER = "ALTIPLAN parser v1.2.1 til personlig statistik af Henrik Højgaard (c) 2026"
+BANNER = "ALTIPLAN parser v1.2.3 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
 # -----------------------------
 ZERO_WIDTH_CATS = {"Cf"}  # unicode "format" chars (zero-width etc.)
-
-TIME_RANGE_RE = re.compile(r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 TIME_LINE_START_RE = re.compile(r"^\s*\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b")
 NUM_3DIGITS_RE = re.compile(r"^\d{3}$")
 CODE_3DIGIT_RE = re.compile(r"\b\d{3}\b")
 THREE_DIGIT_PREFIX_RE = re.compile(r"^\d{3}")
 BR_SPLIT_RE = re.compile(r"<br\s*/?>", re.IGNORECASE)
-SHIFT_RE = re.compile(
-    r"\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b.*?(?=(\b\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\b)|$)"
-)
 TITLE_MONTH_YEAR_RE = re.compile(r"\b([A-Za-zÆØÅæøå\.]{3,})\s+(\d{4})\b")
+# Normaliserer alle <br>, <br/>, </br> (case/whitespace) til <br>
+BR_NORMALIZE_RE = re.compile(r"</\s*br\s*>|<\s*br\s*/?\s*>", re.IGNORECASE)
+# Matcher kun: "15:00 - 09:00␠␠290"  (mindst 2 spaces mellem interval og kode), "15:00 - 09:00␠␠290"  -> ["15:00 - 09:00", "290"]
+TIME_AND_CODE_RE = re.compile(r"^(\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}) {2,}(\d{3})$")
+# "777 -␠␠␠790" -> ["777", "-   790"]
+THREE_DASH_THREE_RE = re.compile(r"^(\d{3}) - {3}(\d{3})$")
+
 
 MONTH_MAP = {
     # EN short + full
@@ -214,93 +216,13 @@ def parse_day_month(text: str) -> tuple[int, int]:
 # -----------------------------
 # Offline parsing of ps (innerHTML)
 # -----------------------------
-# split_multi_shifts: Mest “sikkerhedsnet”. Hvis en tid allerede er på hver sin <br/>, kan man i praksis ofte undvære den. Men den hjælper hvis der stadig kommer en linje som: "07:45 - 15:30 100 15:30 - 22:00 100"
-def split_multi_shifts(text_after_first_time: str) -> list[str]:
-    s = (text_after_first_time or "").strip()
-    if not s:
-        return []
-    matches = [m.group(0).strip() for m in SHIFT_RE.finditer(s)]
-    return matches if matches else [s]
-
-
-# split_labels: hvis man vil have BTY-an og BTY-sen som hver sit element, selv om de står på samme linje (eller hvis en upstream fejl gør at de bliver samlet).
-def split_labels(prefix: str) -> list[str]:
-    """
-    Splitter prefix før første tid i labels.
-    Regler:
-      - tokens med '-' (fx O-an, BTY-sen) holdes samlet
-      - UPPERCASE token (fx VITA) kan kombineres med næste token (dagtid/nat) -> "VITA dagtid"
-    """
-    toks = [t for t in (prefix or "").split() if t]
-    out: list[str] = []
-    i = 0
-    while i < len(toks):
-        t = toks[i]
-
-        # Koder med bindestreg må ikke splittes
-        if "-" in t:
-            out.append(t)
-            i += 1
-            continue
-
-        # "VITA dagtid" / "VITA nat"
-        if t.isupper() and len(t) >= 2:
-            if i + 1 < len(toks):
-                nxt = toks[i + 1]
-                if (not nxt.isupper()) and (not TIME_RANGE_RE.search(nxt)) and (not any(ch.isdigit() for ch in nxt)) and ("-" not in nxt):
-                    out.append(f"{t} {nxt}")
-                    i += 2
-                    continue
-            out.append(t)
-            i += 1
-            continue
-
-        out.append(t)
-        i += 1
-
-    return out
-
-
-# split_dash_pair: nødvendig hvis man vil have bf og - 700 som hver sit element, selv om de står på samme <br/>-linje.
-def split_dash_pair(line: str) -> list[str]:
-    """
-    Splitter kun når '-' er separator med whitespace omkring, og IKKE hvis linjen indeholder tidsinterval.
-    """
-    s = (line or "").strip()
-    if not s:
-        return []
-    if TIME_RANGE_RE.search(s):
-        return [s]
-    if re.search(r"\s-\s", s):
-        left, right = re.split(r"\s-\s+", s, maxsplit=1)
-        left = left.strip()
-        right = right.rstrip()
-        out: list[str] = []
-        if left:
-            out.append(left)
-        if right:
-            out.append("- " + right)
-        return out or [s]
-    return [s]
-
-# anvender de 3 funktioner ovenfor
 def extract_time_lines_from_ps(ps_html: str) -> list[str]:
-    """
-    Simplified offline parsing:
-      - Split on <br/> (and <br>) and also on \r\n/\n
-      - Then apply existing line rules:
-          * If line contains time range: split into labels + shifts
-          * Else: split dash-pair like "bf -   700" into ["bf", "-   700"]
-    """
     s = ps_html or ""
-    # normaliser typiske varianter (sikkerhed, selvom du gør det online)
-    s = s.replace("</br>", "<br/>")
+    s = BR_NORMALIZE_RE.sub("<br>", s)
 
-    # split på <br/>/<br>
     parts = [strip_invisible(p).strip() for p in BR_SPLIT_RE.split(s)]
     parts = [p for p in parts if p]
 
-    # split også på faktiske linjeskift inde i hver part
     lines0: list[str] = []
     for p in parts:
         for sub in p.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
@@ -310,20 +232,25 @@ def extract_time_lines_from_ps(ps_html: str) -> list[str]:
 
     out: list[str] = []
     for ln in lines0:
-        m = TIME_RANGE_RE.search(ln)
+        # Regel 1: tidsinterval + kode
+        m = TIME_AND_CODE_RE.match(ln)
         if m:
-            prefix = ln[:m.start()].strip()
-            rest = ln[m.start():].strip()
-            if prefix:
-                out.extend(split_labels(prefix))
-            out.extend(split_multi_shifts(rest))
-        else:
-            out.extend(split_dash_pair(ln))
+            out.append(m.group(1))
+            out.append(m.group(2))
+            continue
 
-    return [x for x in (t.strip() for t in out) if x]
+        # Regel 2: 3 cifre + " -   " + 3 cifre
+        m2 = THREE_DASH_THREE_RE.match(ln)
+        if m2:
+            out.append(m2.group(1))
+            out.append("-   " + m2.group(2))
+            continue
 
+        out.append(ln)
 
-# simple parser uden funktionerne: split_dash_pair, split_labels, split_shifts
+    return out
+
+# simple parser uden extra funktioner
 def extract_time_lines_from_ps_simple(ps_html: str, no_filter: bool = False) -> list[str]:
     s = (ps_html or "").replace("</br>", "<br/>")
     parts = [strip_invisible(p).strip() for p in BR_SPLIT_RE.split(s)]
