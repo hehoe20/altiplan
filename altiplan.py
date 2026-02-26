@@ -18,11 +18,12 @@ import unicodedata
 import datetime as dt
 from urllib.parse import urljoin
 from collections import Counter, defaultdict
-
+from io import StringIO
 from typing import Optional, List, Tuple
 import requests
 from bs4 import BeautifulSoup
 import urllib3
+import certifi
 
 # tillad piping af std.output fra --expand-output og slå warnings fra ved --insecure
 sys.stdout.reconfigure(encoding="utf-8")
@@ -40,7 +41,7 @@ LOGOUT = "/webmodul/log-af/"
 # -----------------------------
 # Version/banner
 # -----------------------------
-BANNER = "ALTIPLAN parser v1.2.3 til personlig statistik af Henrik Højgaard (c) 2026"
+BANNER = "ALTIPLAN parser v1.2.5 til personlig statistik af Henrik Højgaard (c) 2026"
 
 # -----------------------------
 # Parsing
@@ -355,7 +356,7 @@ def extract_codes_from_ps(ps_html: str) -> set[str]:
     """
     Robust udtræk af 3-cifrede koder fra ps:
     - splitter på <br/>/<br> og linjeskift
-    - finder alle \b\d{3}\b tokens
+    - finder alle \b\\d{3}\b tokens
     """
     s = strip_invisible(ps_html or "")
     # normaliser br-varianter til <br/>
@@ -471,6 +472,8 @@ def fetch_raw_rows_via_login(
     """
     verify_tls = not insecure
     s = requests.Session()
+    s.verify = certifi.where()
+    
     s.headers.update({
         "User-Agent": "Mozilla/5.0 (compatible; altiplan-login-script/3.0)",
         "Accept": "*/*",
@@ -876,6 +879,27 @@ def main() -> None:
     if args.expand_output:
         expanded = list(iter_expanded_rows(raw_rows_stats, parse_func=parse_func))
         print(json.dumps(expanded, ensure_ascii=False, indent=2))
+
+
+# nedenstående funktion til Chaquopy - sv.t eksempel
+# sys.argv = ["", "--inputfile", ".\henrik.json", "--komb"]
+def run_from_android(args_list):
+    # args_list er en liste af strenge ligesom sys.argv
+    
+    # Fang print() output, så det kan vises i Android appen
+    old_stdout = sys.stdout
+    sys.stdout = mystdout = StringIO()
+    
+    try:
+        # Simuler kommandolinje-argumenter
+        sys.argv = ["altiplan.py"] + args_list
+        main()
+    except Exception as e:
+        print(f"Fejl: {str(e)}")
+    finally:
+        sys.stdout = old_stdout
+        
+    return mystdout.getvalue()
 
 
 if __name__ == "__main__":
